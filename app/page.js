@@ -208,48 +208,104 @@ export default function Home() {
           <h2 className="smhc-h2">Frequently Asked Questions</h2>
 
           <details className="smhc-faq">
-            <summary>How fast can I actually sell?</summary>
+            <summary>How Fast Can I Sell My House for Cash in San Diego?</summary>
             <div className="smhc-faq-body">
-              <p>Many homeowners receive an offer within 24 hours and close in as
-              little as 7 days. If you need more time, you choose a later closing
-              date — the timeline is built around you.</p>
+              <p>Most San Diego homeowners receive a cash offer within 24 hours and
+              can close in as little as 7 days. Because there&rsquo;s no lender,
+              appraisal, or financing contingency to wait on, the timeline moves
+              far faster than a traditional sale. If you need more time, you pick a
+              later closing date — the schedule is built around you.</p>
             </div>
           </details>
 
           <details className="smhc-faq">
-            <summary>Do I need to make any repairs?</summary>
+            <summary>Do I Need to Make Repairs Before Selling My House?</summary>
             <div className="smhc-faq-body">
               <p>No. You sell completely as-is. There&rsquo;s no cleaning, staging, or
-              contractor work required — leave behind anything you don&rsquo;t want to
-              take with you.</p>
+              contractor work required, and no inspections to pass. Whether the
+              home needs cosmetic updates or major repairs, you can leave behind
+              anything you don&rsquo;t want to take with you.</p>
             </div>
           </details>
 
           <details className="smhc-faq">
-            <summary>Are there any fees or commissions?</summary>
+            <summary>How Do You Determine the Cash Offer for My House?</summary>
             <div className="smhc-faq-body">
-              <p>There are no agent commissions and no listing fees. We&rsquo;ll walk
-              you through any standard closing costs up front so there are no
-              surprises.</p>
+              <p>Your offer is based on your home&rsquo;s location, size, and condition,
+              along with recent comparable sales in your San Diego neighborhood,
+              minus the cost of any work needed to bring it to market. We&rsquo;ll always
+              explain how the number was reached so you can decide with full
+              information.</p>
             </div>
           </details>
 
           <details className="smhc-faq">
-            <summary>How is my cash offer calculated?</summary>
+            <summary>Are There Any Fees or Commissions When Selling My House?</summary>
             <div className="smhc-faq-body">
-              <p>Your offer is based on your home&rsquo;s location, condition, and recent
-              comparable sales, minus the cost of any work needed to bring it to
-              market. Because you skip repairs, fees, and months of carrying
-              costs, a cash sale often nets out closer than it first appears.</p>
+              <p>There are no agent commissions and no listing fees. You also skip
+              the typical costs of preparing a home for market — repairs, staging,
+              and months of carrying costs. We&rsquo;ll walk you through any standard
+              closing costs up front so there are no surprises.</p>
             </div>
           </details>
 
           <details className="smhc-faq">
-            <summary>Is there any obligation?</summary>
+            <summary>Why Choose a Cash Home Buyer Instead of Listing With a Real Estate Agent?</summary>
+            <div className="smhc-faq-body">
+              <p>A traditional listing can be the right choice when you have time
+              and a move-in-ready home, and it often brings a higher sale price. A
+              cash sale trades some of that price for speed, certainty, and
+              convenience — no showings, no repairs, no financing that can fall
+              through. It tends to make the most sense when you need to sell
+              quickly or the home needs work.</p>
+            </div>
+          </details>
+
+          <details className="smhc-faq">
+            <summary>What Types of Properties Do You Buy?</summary>
+            <div className="smhc-faq-body">
+              <p>We buy a wide range of properties — single-family homes,
+              townhomes, condos, multi-unit buildings, and more — in nearly any
+              condition. Inherited homes, rentals with tenants, properties facing
+              foreclosure, and homes needing major repairs are all welcome.</p>
+            </div>
+          </details>
+
+          <details className="smhc-faq">
+            <summary>Do You Buy Houses Throughout San Diego County?</summary>
+            <div className="smhc-faq-body">
+              <p>Yes. We purchase homes across San Diego County, from the coast to
+              inland communities. If your property is in the county, we&rsquo;d be glad
+              to make you a no-obligation cash offer.</p>
+            </div>
+          </details>
+
+          <details className="smhc-faq">
+            <summary>How Does the Cash Home Buying Process Work?</summary>
+            <div className="smhc-faq-body">
+              <p>It&rsquo;s three simple steps: share a few details about your home and
+              timeline, receive a fair cash offer (often within 24 hours), and if
+              you accept, choose your closing date. There are no showings, no
+              repairs, and no obligation at any point.</p>
+            </div>
+          </details>
+
+          <details className="smhc-faq">
+            <summary>Is There Any Obligation to Accept Your Offer?</summary>
             <div className="smhc-faq-body">
               <p>None at all. Requesting an offer is free and there&rsquo;s no pressure
               to accept. If it&rsquo;s not the right fit, we&rsquo;re happy to point you toward
-              other options.</p>
+              other options that may serve you better.</p>
+            </div>
+          </details>
+
+          <details className="smhc-faq">
+            <summary>How Much Is My Home Worth?</summary>
+            <div className="smhc-faq-body">
+              <p>The best way to find out is to request a free, no-obligation cash
+              offer. We&rsquo;ll review your home&rsquo;s details and recent comparable San
+              Diego sales, then share a fair figure along with how we arrived at
+              it — with no cost and no commitment.</p>
             </div>
           </details>
         </div>
@@ -400,11 +456,16 @@ export default function Home() {
             { '@type': 'WebSite', '@id': 'https://www.sellmyhomesforcash.com/#website', url: 'https://www.sellmyhomesforcash.com/', name: 'Cash Home Offer' },
             { '@type': 'WebPage', '@id': 'https://www.sellmyhomesforcash.com/#webpage', url: 'https://www.sellmyhomesforcash.com/', name: 'Sell My Home Fast For Cash | No Fees, No Repairs', isPartOf: { '@id': 'https://www.sellmyhomesforcash.com/#website' }, description: 'Get a fair, no-obligation cash offer on your home. Sell as-is with no repairs, no showings, and no agent fees.' },
             { '@type': 'FAQPage', '@id': 'https://www.sellmyhomesforcash.com/#faq', mainEntity: [
-              { '@type': 'Question', name: 'How fast can I actually sell?', acceptedAnswer: { '@type': 'Answer', text: 'Many homeowners receive an offer within 24 hours and close in as little as 7 days, or choose a later closing date.' } },
-              { '@type': 'Question', name: 'Do I need to make any repairs?', acceptedAnswer: { '@type': 'Answer', text: 'No. You sell completely as-is with no cleaning, staging, or contractor work required.' } },
-              { '@type': 'Question', name: 'Are there any fees or commissions?', acceptedAnswer: { '@type': 'Answer', text: 'There are no agent commissions and no listing fees. Standard closing costs are explained up front.' } },
-              { '@type': 'Question', name: 'How is my cash offer calculated?', acceptedAnswer: { '@type': 'Answer', text: 'Offers are based on location, condition, and recent comparable sales, minus the cost of work needed to bring the home to market.' } },
-              { '@type': 'Question', name: 'Is there any obligation?', acceptedAnswer: { '@type': 'Answer', text: 'None. Requesting an offer is free with no pressure to accept.' } },
+              { '@type': 'Question', name: 'How Fast Can I Sell My House for Cash in San Diego?', acceptedAnswer: { '@type': 'Answer', text: 'Most San Diego homeowners receive a cash offer within 24 hours and can close in as little as 7 days, since there is no lender, appraisal, or financing contingency to wait on. If you need more time, you pick a later closing date.' } },
+              { '@type': 'Question', name: 'Do I Need to Make Repairs Before Selling My House?', acceptedAnswer: { '@type': 'Answer', text: 'No. You sell completely as-is with no cleaning, staging, contractor work, or inspections. Whether the home needs cosmetic updates or major repairs, you can leave behind anything you do not want to take.' } },
+              { '@type': 'Question', name: 'How Do You Determine the Cash Offer for My House?', acceptedAnswer: { '@type': 'Answer', text: 'The offer is based on your home location, size, and condition, plus recent comparable sales in your San Diego neighborhood, minus the cost of any work needed to bring it to market. We explain how the number was reached.' } },
+              { '@type': 'Question', name: 'Are There Any Fees or Commissions When Selling My House?', acceptedAnswer: { '@type': 'Answer', text: 'There are no agent commissions and no listing fees. You also skip repairs, staging, and months of carrying costs. Any standard closing costs are explained up front.' } },
+              { '@type': 'Question', name: 'Why Choose a Cash Home Buyer Instead of Listing With a Real Estate Agent?', acceptedAnswer: { '@type': 'Answer', text: 'A traditional listing often brings a higher price when you have time and a move-in-ready home. A cash sale trades some price for speed, certainty, and convenience, which makes the most sense when you need to sell quickly or the home needs work.' } },
+              { '@type': 'Question', name: 'What Types of Properties Do You Buy?', acceptedAnswer: { '@type': 'Answer', text: 'We buy single-family homes, townhomes, condos, multi-unit buildings, and more, in nearly any condition, including inherited homes, rentals with tenants, and properties facing foreclosure.' } },
+              { '@type': 'Question', name: 'Do You Buy Houses Throughout San Diego County?', acceptedAnswer: { '@type': 'Answer', text: 'Yes. We purchase homes across San Diego County, from the coast to inland communities, and can make a no-obligation cash offer on properties throughout the county.' } },
+              { '@type': 'Question', name: 'How Does the Cash Home Buying Process Work?', acceptedAnswer: { '@type': 'Answer', text: 'Three steps: share details about your home and timeline, receive a fair cash offer often within 24 hours, and if you accept, choose your closing date. No showings, no repairs, and no obligation.' } },
+              { '@type': 'Question', name: 'Is There Any Obligation to Accept Your Offer?', acceptedAnswer: { '@type': 'Answer', text: 'None. Requesting an offer is free with no pressure to accept, and if it is not the right fit we can point you toward other options.' } },
+              { '@type': 'Question', name: 'How Much Is My Home Worth?', acceptedAnswer: { '@type': 'Answer', text: 'The best way to find out is to request a free, no-obligation cash offer. We review your home details and recent comparable San Diego sales, then share a fair figure and how we arrived at it.' } },
             ] },
           ],
         }) }}
