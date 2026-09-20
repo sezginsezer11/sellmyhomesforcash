@@ -3,11 +3,11 @@ import './globals.css';
 export const metadata = {
   title: 'Sell My Home Fast For Cash | No Fees, No Repairs',
   description:
-    'Get a fair, no-obligation cash offer on your home. Sell as-is with no repairs, no showings, and no agent fees. Close on your timeline.',
+    'Connect with vetted cash buyers and get a fair, no-obligation offer on your home. Sell as-is with no repairs, no showings, and no agent fees.',
   openGraph: {
     title: 'Sell My Home Fast For Cash',
     description:
-      'A fair cash offer with no fees, no repairs, and no showings. Close on your schedule.',
+      'Connect with vetted cash buyers for a fair offer. No fees, no repairs, no showings.',
     type: 'website',
     url: 'https://www.sellmyhomesforcash.com/',
   },
