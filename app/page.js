@@ -1,0 +1,391 @@
+'use client';
+
+import { useState } from 'react';
+
+/* Top-level, stable component — defined OUTSIDE Home so it is not
+   recreated on every keystroke. This is what fixes the typing bug. */
+function LeadForm({ idPrefix, form, update, submit, status, errMsg }) {
+  return (
+    <form className="smhc-form" onSubmit={submit} noValidate>
+      <div className="smhc-field">
+        <label htmlFor={`${idPrefix}-name`}>Full name</label>
+        <input id={`${idPrefix}-name`} name="name" value={form.name}
+          onChange={update} required autoComplete="name" />
+      </div>
+      <div className="smhc-field">
+        <label htmlFor={`${idPrefix}-phone`}>Phone</label>
+        <input id={`${idPrefix}-phone`} name="phone" value={form.phone}
+          onChange={update} type="tel" autoComplete="tel" />
+      </div>
+      <div className="smhc-field">
+        <label htmlFor={`${idPrefix}-email`}>Email</label>
+        <input id={`${idPrefix}-email`} name="email" value={form.email}
+          onChange={update} type="email" autoComplete="email" />
+      </div>
+      <div className="smhc-field">
+        <label htmlFor={`${idPrefix}-address`}>Property address</label>
+        <input id={`${idPrefix}-address`} name="address" value={form.address}
+          onChange={update} required autoComplete="street-address" />
+      </div>
+      <div className="smhc-row">
+        <div className="smhc-field">
+          <label htmlFor={`${idPrefix}-timeline`}>Timeline</label>
+          <select id={`${idPrefix}-timeline`} name="timeline"
+            value={form.timeline} onChange={update}>
+            <option value="">Select…</option>
+            <option>ASAP</option>
+            <option>1–3 months</option>
+            <option>3–6 months</option>
+            <option>Just exploring</option>
+          </select>
+        </div>
+        <div className="smhc-field">
+          <label htmlFor={`${idPrefix}-condition`}>Condition</label>
+          <select id={`${idPrefix}-condition`} name="condition"
+            value={form.condition} onChange={update}>
+            <option value="">Select…</option>
+            <option>Move-in ready</option>
+            <option>Needs some work</option>
+            <option>Major repairs</option>
+          </select>
+        </div>
+      </div>
+      <input type="text" name="company" value={form.company} onChange={update}
+        tabIndex="-1" autoComplete="off" aria-hidden="true"
+        style={{ position: 'absolute', left: '-9999px', width: 1, height: 1 }} />
+      <button type="submit" className="smhc-cta" disabled={status === 'sending'}>
+        {status === 'sending' ? 'Sending…' : 'Get My Cash Offer'}
+      </button>
+      {status === 'ok' && (
+        <p className="smhc-note smhc-note-ok" role="status">
+          Thank you — your request is in. We&rsquo;ll reach out shortly with your offer.
+        </p>
+      )}
+      {status === 'error' && (
+        <p className="smhc-note smhc-note-err" role="alert">{errMsg}</p>
+      )}
+      <p className="smhc-fineprint">
+        No obligation. Your information stays private and is never sold.
+      </p>
+    </form>
+  );
+}
+
+export default function Home() {
+  const [form, setForm] = useState({
+    name: '', phone: '', email: '', address: '',
+    timeline: '', condition: '', company: '',
+  });
+  const [status, setStatus] = useState('idle');
+  const [errMsg, setErrMsg] = useState('');
+
+  const update = (e) => setForm((f) => ({ ...f, [e.target.name]: e.target.value }));
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setStatus('sending'); setErrMsg('');
+    try {
+      const res = await fetch('/api/lead', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      const data = await res.json();
+      if (data.ok) { setStatus('ok'); }
+      else { setStatus('error'); setErrMsg(data.error || 'Please try again.'); }
+    } catch {
+      setStatus('error'); setErrMsg('Network error. Please try again.');
+    }
+  };
+
+  const formProps = { form, update, submit, status, errMsg };
+
+  return (
+    <div id="smhc-wrap">
+      <header className="smhc-header">
+        <div className="smhc-container smhc-header-inner">
+          <span className="smhc-logo">Cash&nbsp;Home&nbsp;Offer</span>
+          <a className="smhc-phone" href="tel:+10000000000">(000) 000-0000</a>
+        </div>
+      </header>
+
+      <section className="smhc-hero">
+        <div className="smhc-container smhc-hero-grid">
+          <div className="smhc-hero-copy">
+            <span className="smhc-eyebrow">A simpler way to sell</span>
+            <h1>Sell Your Home Fast For Cash — As-Is, No Repairs</h1>
+            <p className="smhc-sub">
+              Skip the showings, the repairs, and the agent fees. Get a fair,
+              no-obligation cash offer and close on the timeline that works
+              for you.
+            </p>
+            <ul className="smhc-hero-list">
+              <li>No fees or commissions</li>
+              <li>Sell as-is — zero repairs or cleanup</li>
+              <li>Close in as few as 7 days, or on your schedule</li>
+            </ul>
+          </div>
+          <div className="smhc-hero-card">
+            <h2 className="smhc-card-title">Get Your Free Cash Offer</h2>
+            <LeadForm idPrefix="hero" {...formProps} />
+          </div>
+        </div>
+      </section>
+
+      <section className="smhc-trust">
+        <div className="smhc-container smhc-trust-grid">
+          <div className="smhc-trust-item">
+            <span className="smhc-trust-num">Fast</span>
+            <span className="smhc-trust-label">Offers in as little as 24 hours</span>
+          </div>
+          <div className="smhc-trust-item">
+            <span className="smhc-trust-num">As-Is</span>
+            <span className="smhc-trust-label">No repairs, no cleaning, no staging</span>
+          </div>
+          <div className="smhc-trust-item">
+            <span className="smhc-trust-num">$0</span>
+            <span className="smhc-trust-label">No commissions or hidden fees</span>
+          </div>
+        </div>
+      </section>
+
+      <section className="smhc-section" id="how-it-works">
+        <div className="smhc-container">
+          <span className="smhc-eyebrow smhc-eyebrow-dark">Simple &amp; transparent</span>
+          <h2 className="smhc-h2">How It Works</h2>
+          <div className="smhc-steps">
+            <div className="smhc-step">
+              <span className="smhc-step-num">1</span>
+              <h3>Tell us about your home</h3>
+              <p>Share a few details about your property and your timeline. It takes about two minutes.</p>
+            </div>
+            <div className="smhc-step">
+              <span className="smhc-step-num">2</span>
+              <h3>Get your cash offer</h3>
+              <p>We review your home and present a fair, no-obligation cash offer — often within 24 hours.</p>
+            </div>
+            <div className="smhc-step">
+              <span className="smhc-step-num">3</span>
+              <h3>Close on your date</h3>
+              <p>Pick the closing date that suits you. No repairs, no showings, no surprises.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="smhc-section smhc-section-alt" id="compare">
+        <div className="smhc-container">
+          <span className="smhc-eyebrow smhc-eyebrow-dark">See the difference</span>
+          <h2 className="smhc-h2">Cash Offer vs. Traditional Sale</h2>
+          <div className="smhc-table-wrap">
+            <table className="smhc-table">
+              <thead>
+                <tr>
+                  <th scope="col">&nbsp;</th>
+                  <th scope="col" className="smhc-th-hi">Cash Offer</th>
+                  <th scope="col">Traditional Sale</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><th scope="row">Commissions &amp; fees</th><td className="smhc-hi">None</td><td>Up to 6% + fees</td></tr>
+                <tr><th scope="row">Repairs</th><td className="smhc-hi">Sell fully as-is</td><td>Often required</td></tr>
+                <tr><th scope="row">Showings &amp; open houses</th><td className="smhc-hi">None</td><td>Ongoing</td></tr>
+                <tr><th scope="row">Time to close</th><td className="smhc-hi">As few as 7 days</td><td>2–3 months</td></tr>
+                <tr><th scope="row">Closing date</th><td className="smhc-hi">You choose</td><td>Buyer-driven</td></tr>
+                <tr><th scope="row">Risk of falling through</th><td className="smhc-hi">Minimal</td><td>Financing-dependent</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p className="smhc-disclaimer">
+            A cash offer is typically below full retail market value in exchange
+            for speed, certainty, and selling as-is. We&rsquo;ll always explain how
+            your offer is calculated so you can decide what&rsquo;s right for you.
+          </p>
+        </div>
+      </section>
+
+      <section className="smhc-section" id="faq">
+        <div className="smhc-container smhc-faq-container">
+          <span className="smhc-eyebrow smhc-eyebrow-dark">Good to know</span>
+          <h2 className="smhc-h2">Frequently Asked Questions</h2>
+
+          <details className="smhc-faq">
+            <summary>How fast can I actually sell?</summary>
+            <div className="smhc-faq-body">
+              <p>Many homeowners receive an offer within 24 hours and close in as
+              little as 7 days. If you need more time, you choose a later closing
+              date — the timeline is built around you.</p>
+            </div>
+          </details>
+
+          <details className="smhc-faq">
+            <summary>Do I need to make any repairs?</summary>
+            <div className="smhc-faq-body">
+              <p>No. You sell completely as-is. There&rsquo;s no cleaning, staging, or
+              contractor work required — leave behind anything you don&rsquo;t want to
+              take with you.</p>
+            </div>
+          </details>
+
+          <details className="smhc-faq">
+            <summary>Are there any fees or commissions?</summary>
+            <div className="smhc-faq-body">
+              <p>There are no agent commissions and no listing fees. We&rsquo;ll walk
+              you through any standard closing costs up front so there are no
+              surprises.</p>
+            </div>
+          </details>
+
+          <details className="smhc-faq">
+            <summary>How is my cash offer calculated?</summary>
+            <div className="smhc-faq-body">
+              <p>Your offer is based on your home&rsquo;s location, condition, and recent
+              comparable sales, minus the cost of any work needed to bring it to
+              market. Because you skip repairs, fees, and months of carrying
+              costs, a cash sale often nets out closer than it first appears.</p>
+            </div>
+          </details>
+
+          <details className="smhc-faq">
+            <summary>Is there any obligation?</summary>
+            <div className="smhc-faq-body">
+              <p>None at all. Requesting an offer is free and there&rsquo;s no pressure
+              to accept. If it&rsquo;s not the right fit, we&rsquo;re happy to point you toward
+              other options.</p>
+            </div>
+          </details>
+        </div>
+      </section>
+
+      <section className="smhc-contact" id="contact">
+        <div className="smhc-container smhc-contact-grid">
+          <div className="smhc-contact-copy">
+            <h2>Ready for Your Cash Offer?</h2>
+            <p>Tell us about your home and we&rsquo;ll get you a fair, no-obligation
+            offer — fast. No repairs, no showings, no fees.</p>
+            <p className="smhc-contact-phone">
+              Prefer to talk? <a href="tel:+10000000000">(000) 000-0000</a>
+            </p>
+          </div>
+          <div className="smhc-contact-card">
+            <LeadForm idPrefix="contact" {...formProps} />
+          </div>
+        </div>
+      </section>
+
+      <footer className="smhc-footer">
+        <div className="smhc-container">
+          <p className="smhc-foot-name">Cash Home Offer</p>
+          <p className="smhc-foot-fine">
+            [Business name / license placeholder] &middot; San Diego, California
+          </p>
+          <p className="smhc-foot-fine">
+            This site is operated by a home-buying service. Cash offers are
+            typically below full market value in exchange for speed and
+            convenience. This is not a solicitation for a listing agreement.
+          </p>
+          <p className="smhc-foot-fine">
+            &copy; {new Date().getFullYear()} Cash Home Offer. All rights reserved.
+          </p>
+        </div>
+      </footer>
+
+      <style>{`
+        #smhc-wrap { overflow-x: hidden; }
+        .smhc-container { max-width: 1120px; margin: 0 auto; padding: 0 20px; }
+        .smhc-header { background: var(--deep); position: sticky; top: 0; z-index: 50; }
+        .smhc-header-inner { display: flex; align-items: center; justify-content: space-between; height: 64px; }
+        .smhc-logo { font-family: 'Cormorant Garamond', serif; font-weight: 700; font-size: 24px; color: #fff; letter-spacing: 0.3px; }
+        .smhc-phone { color: #fff !important; text-decoration: none; font-weight: 500; border: 1px solid rgba(255,255,255,.4); padding: 8px 16px; border-radius: 4px; }
+        .smhc-phone:hover { background: rgba(255,255,255,.1); color: #fff !important; }
+        .smhc-hero { background: linear-gradient(135deg, var(--deep) 0%, var(--teal) 100%); padding: 64px 0 72px; }
+        .smhc-hero-grid { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 48px; align-items: center; }
+        .smhc-hero-copy { color: #fff; }
+        .smhc-eyebrow { display: inline-block; text-transform: uppercase; letter-spacing: 2.5px; font-size: 12px; font-weight: 500; color: var(--gold); margin-bottom: 14px; }
+        .smhc-hero-copy h1 { color: #fff; font-size: clamp(34px, 5vw, 54px); line-height: 1.15; }
+        .smhc-sub { color: #fff; opacity: .95; font-size: 18px; line-height: 1.7; letter-spacing: .3px; margin: 18px 0 22px; max-width: 520px; }
+        .smhc-hero-list { list-style: none; padding: 0; margin: 0; color: #fff; }
+        .smhc-hero-list li { position: relative; padding-left: 30px; margin-bottom: 12px; font-size: 16px; }
+        .smhc-hero-list li::before { content: "\\2713"; position: absolute; left: 0; top: 0; color: var(--gold); font-weight: 700; }
+        .smhc-hero-card, .smhc-contact-card { background: #fff; border-radius: 10px; padding: 28px; box-shadow: 0 30px 60px -20px rgba(0,0,0,.45); border-top: 4px solid var(--gold); }
+        .smhc-card-title { color: var(--ink); font-size: 28px; text-align: center; margin-bottom: 18px; }
+        .smhc-form { display: block; }
+        .smhc-field { margin-bottom: 14px; }
+        .smhc-field label { display: block; font-size: 13px; font-weight: 500; color: var(--muted); margin-bottom: 5px; letter-spacing: .3px; }
+        .smhc-field input, .smhc-field select { width: 100%; padding: 12px 13px; border: 1px solid var(--line); border-radius: 6px; font-family: 'Jost', sans-serif; font-size: 15px; color: var(--ink); background: #fff; }
+        .smhc-field input:focus, .smhc-field select:focus { outline: 2px solid var(--teal); border-color: var(--teal); }
+        .smhc-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .smhc-cta { width: 100%; margin-top: 8px; padding: 15px 20px; background: var(--teal); color: #fff; border: 0; border-radius: 6px; font-family: 'Jost', sans-serif; font-size: 17px; font-weight: 600; letter-spacing: .3px; cursor: pointer; transition: background .2s; }
+        .smhc-cta:hover { background: var(--teal-600); }
+        .smhc-cta:disabled { opacity: .6; cursor: default; }
+        .smhc-note { margin: 12px 0 0; padding: 10px 12px; border-radius: 6px; font-size: 14px; }
+        .smhc-note-ok { background: #e7f4ec; color: #1c5b34; }
+        .smhc-note-err { background: #fbeaea; color: #8a2020; }
+        .smhc-fineprint { font-size: 12px; color: var(--muted); text-align: center; margin: 12px 0 0; }
+        .smhc-trust { background: var(--sand); border-bottom: 1px solid var(--line); }
+        .smhc-trust-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 20px; padding: 30px 20px; text-align: center; }
+        .smhc-trust-num { display: block; font-family: 'Cormorant Garamond', serif; font-size: 34px; font-weight: 700; color: var(--teal); }
+        .smhc-trust-label { display: block; font-size: 14px; color: var(--muted); margin-top: 4px; }
+        .smhc-section { padding: 72px 0; }
+        .smhc-section-alt { background: var(--sand); }
+        .smhc-eyebrow-dark { color: var(--teal); }
+        .smhc-h2 { font-size: clamp(30px, 4vw, 44px); color: var(--ink); margin-bottom: 36px; }
+        .smhc-steps { display: grid; grid-template-columns: repeat(3,1fr); gap: 26px; }
+        .smhc-step { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 30px 26px; }
+        .smhc-step-num { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 50%; background: var(--deep); color: #fff; font-family: 'Cormorant Garamond', serif; font-size: 22px; font-weight: 700; margin-bottom: 14px; }
+        .smhc-step h3 { font-size: 24px; color: var(--ink); }
+        .smhc-step p { color: var(--muted); font-size: 15px; margin: 0; }
+        .smhc-table-wrap { overflow-x: auto; border-radius: 10px; box-shadow: 0 10px 30px -18px rgba(0,0,0,.3); }
+        .smhc-table { width: 100%; border-collapse: collapse; background: #fff; min-width: 520px; }
+        .smhc-table th, .smhc-table td { padding: 15px 18px; text-align: left; border-bottom: 1px solid var(--line); font-size: 15px; }
+        .smhc-table thead th { background: var(--deep); color: #fff; font-weight: 500; letter-spacing: .3px; }
+        .smhc-table thead th.smhc-th-hi { background: var(--teal); }
+        .smhc-table tbody th { font-weight: 500; color: var(--ink); }
+        .smhc-table td.smhc-hi { background: var(--mist); font-weight: 500; color: var(--deep); }
+        .smhc-disclaimer { font-size: 13.5px; color: var(--muted); margin-top: 18px; max-width: 760px; line-height: 1.7; }
+        .smhc-faq-container { max-width: 820px; }
+        .smhc-faq { border: 1px solid var(--line); border-radius: 8px; margin-bottom: 12px; background: #fff; overflow: hidden; }
+        .smhc-faq summary { cursor: pointer; padding: 18px 52px 18px 20px; font-size: 17px; font-weight: 500; color: var(--ink); position: relative; list-style: none; line-height: 1.7; letter-spacing: .2px; }
+        .smhc-faq summary::-webkit-details-marker { display: none; }
+        .smhc-faq summary::after { content: "+"; position: absolute; right: 20px; top: 50%; transform: translateY(-50%); font-size: 26px; font-weight: 300; color: var(--gold); transition: transform .25s; line-height: 1; }
+        .smhc-faq[open] summary::after { transform: translateY(-50%) rotate(45deg); }
+        .smhc-faq-body { padding: 0 20px 20px; }
+        .smhc-faq-body p { margin: 0; color: var(--muted); font-size: 15.5px; line-height: 1.8; }
+        .smhc-contact { background: linear-gradient(135deg, var(--deep) 0%, var(--teal) 100%); padding: 72px 0; }
+        .smhc-contact-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; }
+        .smhc-contact-copy h2 { color: #fff; font-size: clamp(30px, 4vw, 44px); }
+        .smhc-contact-copy p { color: #fff; opacity: .95; font-size: 17px; line-height: 1.75; }
+        .smhc-contact-phone a { color: #fff !important; font-weight: 600; }
+        .smhc-contact-card { border-top-color: var(--gold); }
+        .smhc-footer { background: var(--ink); padding: 40px 0; }
+        .smhc-foot-name { font-family: 'Cormorant Garamond', serif; font-size: 22px; color: #fff; margin: 0 0 8px; }
+        .smhc-foot-fine { color: #9fb0b4; font-size: 13px; line-height: 1.7; margin: 0 0 8px; max-width: 720px; }
+        @media (max-width: 860px) {
+          .smhc-hero-grid, .smhc-contact-grid { grid-template-columns: 1fr; gap: 34px; }
+          .smhc-steps { grid-template-columns: 1fr; }
+          .smhc-trust-grid { grid-template-columns: 1fr; gap: 24px; }
+          .smhc-hero { padding: 44px 0 52px; }
+          .smhc-section { padding: 52px 0; }
+        }
+      `}</style>
+
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify({
+          '@context': 'https://schema.org',
+          '@graph': [
+            { '@type': 'WebSite', '@id': 'https://www.sellmyhomesforcash.com/#website', url: 'https://www.sellmyhomesforcash.com/', name: 'Cash Home Offer' },
+            { '@type': 'WebPage', '@id': 'https://www.sellmyhomesforcash.com/#webpage', url: 'https://www.sellmyhomesforcash.com/', name: 'Sell My Home Fast For Cash | No Fees, No Repairs', isPartOf: { '@id': 'https://www.sellmyhomesforcash.com/#website' }, description: 'Get a fair, no-obligation cash offer on your home. Sell as-is with no repairs, no showings, and no agent fees.' },
+            { '@type': 'FAQPage', '@id': 'https://www.sellmyhomesforcash.com/#faq', mainEntity: [
+              { '@type': 'Question', name: 'How fast can I actually sell?', acceptedAnswer: { '@type': 'Answer', text: 'Many homeowners receive an offer within 24 hours and close in as little as 7 days, or choose a later closing date.' } },
+              { '@type': 'Question', name: 'Do I need to make any repairs?', acceptedAnswer: { '@type': 'Answer', text: 'No. You sell completely as-is with no cleaning, staging, or contractor work required.' } },
+              { '@type': 'Question', name: 'Are there any fees or commissions?', acceptedAnswer: { '@type': 'Answer', text: 'There are no agent commissions and no listing fees. Standard closing costs are explained up front.' } },
+              { '@type': 'Question', name: 'How is my cash offer calculated?', acceptedAnswer: { '@type': 'Answer', text: 'Offers are based on location, condition, and recent comparable sales, minus the cost of work needed to bring the home to market.' } },
+              { '@type': 'Question', name: 'Is there any obligation?', acceptedAnswer: { '@type': 'Answer', text: 'None. Requesting an offer is free with no pressure to accept.' } },
+            ] },
+          ],
+        }) }}
+      />
+    </div>
+  );
+}

@@ -1,0 +1,48 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Cash-buyer venture palette — deliberately separate from the KW luxury brand.
+     Trust-forward deep teal + warm gold accent, WCAG-checked. */
+  --ink: #12242b;        /* near-black teal, body text on light (14:1) */
+  --deep: #0f3d3e;       /* deep teal, dark sections */
+  --teal: #16585a;       /* primary brand teal */
+  --teal-600: #0e4a4c;   /* hover */
+  --gold: #c9a96e;       /* accent lines / borders ONLY, never text/link */
+  --sand: #f6f3ee;       /* warm off-white section bg */
+  --mist: #e7ede9;       /* pale panel */
+  --line: #d8ddd9;       /* hairlines */
+  --link: #0033cc;       /* AAA link color */
+  --link-hover: #0022aa;
+  --white: #ffffff;
+  --muted: #4a5a5f;      /* muted body (7:1 on white) */
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; scroll-padding-top: 80px; }
+
+body {
+  margin: 0;
+  font-family: 'Jost', system-ui, sans-serif;
+  color: var(--ink);
+  background: var(--white);
+  font-weight: 300;
+  line-height: 1.85;
+  letter-spacing: 0.2px;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 {
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+  line-height: 1.25;
+  margin: 0 0 0.4em;
+}
+
+a { color: var(--link); text-decoration: underline; text-underline-offset: 4px; text-decoration-thickness: 2px; }
+a:hover { color: var(--link-hover); }
+
+img { max-width: 100%; height: auto; display: block; }
