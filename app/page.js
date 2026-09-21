@@ -130,6 +130,11 @@ export default function Home() {
         </div>
       </section>
 
+      <section className="smhc-photoband" aria-label="Sell your house fast for cash in San Diego">
+        <img src="/sell-my-house-fast-for-cash-san-diego.jpg"
+          alt="Sell your house fast for cash in San Diego" loading="lazy" />
+      </section>
+
       <section className="smhc-trust">
         <div className="smhc-container smhc-trust-grid">
           <div className="smhc-trust-item">
@@ -392,6 +397,11 @@ export default function Home() {
         .smhc-note-ok { background: #e7f4ec; color: #1c5b34; }
         .smhc-note-err { background: #fbeaea; color: #8a2020; }
         .smhc-fineprint { font-size: 12px; color: #6a7a82; text-align: center; margin: 12px 0 0; }
+
+        /* Photo band — full-width image strip below hero */
+        .smhc-photoband { width: 100%; line-height: 0; }
+        .smhc-photoband img { width: 100%; height: auto; max-height: 460px; object-fit: cover; display: block; }
+        @media (max-width: 860px) { .smhc-photoband img { max-height: 260px; } }
 
         /* Trust bar — light grey */
         .smhc-trust { background: #f5f7f9; border-top: 1px solid #e6e9ec; border-bottom: 1px solid #e6e9ec; }
