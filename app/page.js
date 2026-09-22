@@ -1,138 +1,103 @@
 'use client';
 
-import { useState } from 'react';
-
-function LeadForm({ idPrefix, form, update, submit, status, errMsg }) {
-  return (
-    <form className="smhc-form" onSubmit={submit} noValidate>
-      <div className="smhc-field">
-        <label htmlFor={`${idPrefix}-name`}>Full name</label>
-        <input id={`${idPrefix}-name`} name="name" value={form.name}
-          onChange={update} required autoComplete="name" />
-      </div>
-      <div className="smhc-field">
-        <label htmlFor={`${idPrefix}-phone`}>Phone</label>
-        <input id={`${idPrefix}-phone`} name="phone" value={form.phone}
-          onChange={update} type="tel" autoComplete="tel" />
-      </div>
-      <div className="smhc-field">
-        <label htmlFor={`${idPrefix}-email`}>Email</label>
-        <input id={`${idPrefix}-email`} name="email" value={form.email}
-          onChange={update} type="email" autoComplete="email" />
-      </div>
-      <div className="smhc-field">
-        <label htmlFor={`${idPrefix}-address`}>Property address</label>
-        <input id={`${idPrefix}-address`} name="address" value={form.address}
-          onChange={update} required autoComplete="street-address" />
-      </div>
-      <div className="smhc-row">
-        <div className="smhc-field">
-          <label htmlFor={`${idPrefix}-timeline`}>Timeline</label>
-          <select id={`${idPrefix}-timeline`} name="timeline"
-            value={form.timeline} onChange={update}>
-            <option value="">Select…</option>
-            <option>ASAP</option>
-            <option>1–3 months</option>
-            <option>3–6 months</option>
-            <option>Just exploring</option>
-          </select>
-        </div>
-        <div className="smhc-field">
-          <label htmlFor={`${idPrefix}-condition`}>Condition</label>
-          <select id={`${idPrefix}-condition`} name="condition"
-            value={form.condition} onChange={update}>
-            <option value="">Select…</option>
-            <option>Move-in ready</option>
-            <option>Needs some work</option>
-            <option>Major repairs</option>
-          </select>
-        </div>
-      </div>
-      <input type="text" name="company" value={form.company} onChange={update}
-        tabIndex="-1" autoComplete="off" aria-hidden="true"
-        style={{ position: 'absolute', left: '-9999px', width: 1, height: 1 }} />
-      <button type="submit" className="smhc-cta" disabled={status === 'sending'}>
-        {status === 'sending' ? 'Sending…' : 'Get My Cash Offer'}
-      </button>
-      {status === 'ok' && (
-        <p className="smhc-note smhc-note-ok" role="status">
-          Thank you — your request is in. We&rsquo;ll reach out shortly with your offer.
-        </p>
-      )}
-      {status === 'error' && (
-        <p className="smhc-note smhc-note-err" role="alert">{errMsg}</p>
-      )}
-      <p className="smhc-fineprint">
-        No obligation. Your information stays private and is never sold.
-      </p>
-    </form>
-  );
-}
+import { useState, useEffect, useRef } from 'react';
 
 export default function Home() {
-  const [form, setForm] = useState({
-    name: '', phone: '', email: '', address: '',
-    timeline: '', condition: '', company: '',
-  });
-  const [status, setStatus] = useState('idle');
-  const [errMsg, setErrMsg] = useState('');
+  const [address, setAddress] = useState('');
+  const [busy, setBusy] = useState(false);
+  const inputRef = useRef(null);
+  const acRef = useRef(null);
 
-  const update = (e) => setForm((f) => ({ ...f, [e.target.name]: e.target.value }));
+  // Load Google Maps Places and attach autocomplete to the address field.
+  useEffect(() => {
+    const key = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY;
+    if (!key) return;
+
+    function attach() {
+      if (!window.google || !inputRef.current || acRef.current) return;
+      acRef.current = new window.google.maps.places.Autocomplete(inputRef.current, {
+        types: ['address'],
+        componentRestrictions: { country: 'us' },
+        fields: ['formatted_address'],
+      });
+      acRef.current.addListener('place_changed', () => {
+        const p = acRef.current.getPlace();
+        if (p && p.formatted_address) setAddress(p.formatted_address);
+      });
+    }
+
+    if (window.google && window.google.maps) { attach(); return; }
+    const existing = document.getElementById('gmaps-js');
+    if (existing) { existing.addEventListener('load', attach); return; }
+    const s = document.createElement('script');
+    s.id = 'gmaps-js';
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places`;
+    s.async = true; s.defer = true;
+    s.onload = attach;
+    document.head.appendChild(s);
+  }, []);
 
   const submit = async (e) => {
     e.preventDefault();
-    setStatus('sending'); setErrMsg('');
+    const addr = (inputRef.current?.value || address).trim();
+    if (!addr) { inputRef.current?.focus(); return; }
+    setBusy(true);
+    // Kick off Redfin lookup; don't block navigation on it (store result for page 2).
     try {
-      const res = await fetch('/api/lead', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+      const res = await fetch('/api/property', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: addr }),
       });
       const data = await res.json();
-      if (data.ok) {
-        setStatus('ok');
-        // Redirect to the details page so we can capture more about the property.
-        if (data.id) {
-          window.location.href = '/details?id=' + encodeURIComponent(data.id);
-        }
-      }
-      else { setStatus('error'); setErrMsg(data.error || 'Please try again.'); }
+      const facts = (data && data.facts) || {};
+      sessionStorage.setItem('smhc_address', addr);
+      sessionStorage.setItem('smhc_facts', JSON.stringify(facts));
     } catch {
-      setStatus('error'); setErrMsg('Network error. Please try again.');
+      sessionStorage.setItem('smhc_address', addr);
+      sessionStorage.setItem('smhc_facts', '{}');
     }
+    window.location.href = '/get-offer';
   };
 
-  const formProps = { form, update, submit, status, errMsg };
+  const onKey = (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(e); } };
 
   return (
-    <div id="smhc-wrap">
-      <header className="smhc-header">
-        <div className="smhc-container smhc-header-inner">
-          <span className="smhc-logo">Cash&nbsp;Home&nbsp;Offer</span>
-          <a className="smhc-phone" href="tel:+18584366585">(858) 436-6585</a>
+    <div id="h-wrap"><span id="top"></span>
+      <header className="h-header">
+        <div className="h-container h-header-in">
+          <span className="h-logo">Cash&nbsp;Home&nbsp;Offer</span>
+          <a className="h-phone" href="tel:+18584366585">(858) 436-6585</a>
         </div>
       </header>
 
-      <section className="smhc-hero">
-        <div className="smhc-container smhc-hero-grid">
-          <div className="smhc-hero-copy">
-            <span className="smhc-eyebrow">A simpler way to sell</span>
-            <h1>Sell Your Home Fast For Cash — As-Is, No Repairs</h1>
-            <p className="smhc-sub">
-              Skip the showings, the repairs, and the agent fees. We connect you
-              with vetted cash buyers so you can get a fair, no-obligation offer
-              and close on the timeline that works for you.
-            </p>
-            <ul className="smhc-hero-list">
-              <li>No fees or commissions</li>
-              <li>Sell as-is, any condition — zero repairs or cleanup</li>
-              <li>Connect with vetted cash buyers in our network</li>
-            </ul>
-          </div>
-          <div className="smhc-hero-card">
-            <h2 className="smhc-card-title">Get Your Free Cash Offer</h2>
-            <LeadForm idPrefix="hero" {...formProps} />
-          </div>
+      <section className="h-hero">
+        <div className="h-hero-inner">
+          <span className="h-eyebrow">A simpler way to sell</span>
+          <h1>Sell Your House Fast to San Diego&rsquo;s Trusted Cash Buyers</h1>
+          <p className="h-sub">Enter your address to receive competing, no-obligation
+          cash offers — sell as-is, no repairs, no fees.</p>
+
+          <form className="h-form" onSubmit={submit}>
+            <input
+              ref={inputRef}
+              type="text"
+              placeholder="Enter your home address"
+              defaultValue={address}
+              onKeyDown={onKey}
+              autoComplete="off"
+              aria-label="Home address"
+            />
+            <button type="submit" disabled={busy}>
+              {busy ? 'Checking…' : 'Get My Offer'}
+            </button>
+          </form>
+          <p className="h-fine">No obligation. Your information stays private and is never sold.</p>
+
+          <ul className="h-trust">
+            <li>Competing cash offers</li>
+            <li>Sell as-is, any condition</li>
+            <li>No fees or commissions</li>
+          </ul>
         </div>
       </section>
 
@@ -370,18 +335,16 @@ export default function Home() {
       </section>
 
       <section className="smhc-contact" id="contact">
-        <div className="smhc-container smhc-contact-grid">
-          <div className="smhc-contact-copy">
-            <h2>Ready for Your Cash Offer?</h2>
-            <p>Tell us about your home and we&rsquo;ll connect you with vetted cash
-            buyers for a fair, no-obligation offer — fast. No repairs, no
-            showings, no agent fees.</p>
-            <p className="smhc-contact-phone">
-              Prefer to talk? <a href="tel:+18584366585">(858) 436-6585</a>
-            </p>
-          </div>
-          <div className="smhc-contact-card">
-            <LeadForm idPrefix="contact" {...formProps} />
+        <div className="smhc-container smhc-contact-cta">
+          <h2>Ready for Your Cash Offer?</h2>
+          <p>Enter your address to get competing, no-obligation cash offers from
+          our vetted buyer network — fast. No repairs, no showings, no agent fees.</p>
+          <div className="smhc-cta-row">
+            <a href="#top" className="smhc-cta-btn"
+              onClick={(e)=>{e.preventDefault();window.scrollTo({top:0,behavior:'smooth'});}}>
+              Get My Offer
+            </a>
+            <span className="smhc-cta-or">or call <a href="tel:+18584366585">(858) 436-6585</a></span>
           </div>
         </div>
       </section>
@@ -406,6 +369,33 @@ export default function Home() {
       </footer>
 
       <style>{`
+        #h-wrap { min-height: 100vh; background: #ffffff; font-family: 'Jost',system-ui,sans-serif; color: #1c2b33; }
+        .h-container, .h-hero-inner { max-width: 900px; margin: 0 auto; padding: 0 20px; }
+        .h-header { border-bottom: 1px solid #e6e9ec; }
+        .h-header-in { display: flex; align-items: center; justify-content: space-between; height: 64px; max-width: 1120px; }
+        .h-logo { font-family: 'Cormorant Garamond',serif; font-weight: 700; font-size: 24px; color: #296190; }
+        .h-phone { background: #296190; color: #fff; text-decoration: none; font-weight: 500; padding: 9px 18px; border-radius: 6px; }
+        .h-phone:hover { background: #21506f; }
+        .h-hero { min-height: calc(100vh - 64px); display: flex; align-items: center; background: linear-gradient(180deg,#ffffff 0%,#f5f7f9 100%); }
+        .h-hero-inner { text-align: center; padding-top: 40px; padding-bottom: 60px; }
+        .h-eyebrow { display: inline-block; text-transform: uppercase; letter-spacing: 2.5px; font-size: 12px; font-weight: 600; color: #296190; margin-bottom: 16px; }
+        .h-hero h1 { font-family: 'Cormorant Garamond',serif; font-weight: 600; font-size: clamp(34px,6vw,60px); line-height: 1.1; color: #1c2b33; margin: 0 0 18px; letter-spacing: -0.5px; }
+        .h-sub { font-size: 19px; line-height: 1.65; color: #4a5a62; max-width: 560px; margin: 0 auto 30px; }
+        .h-form { display: flex; gap: 10px; max-width: 620px; margin: 0 auto; }
+        .h-form input { flex: 1; padding: 17px 18px; border: 1.5px solid #d5dbdf; border-radius: 8px; font-family: 'Jost',sans-serif; font-size: 17px; color: #1c2b33; }
+        .h-form input:focus { outline: none; border-color: #296190; box-shadow: 0 0 0 3px rgba(41,97,144,.18); }
+        .h-form button { padding: 17px 30px; background: #296190; color: #fff; border: 0; border-radius: 8px; font-family: 'Jost',sans-serif; font-size: 17px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+        .h-form button:hover { background: #21506f; }
+        .h-form button:disabled { opacity: .6; cursor: default; }
+        .h-fine { font-size: 13px; color: #8a9aa2; margin: 14px 0 0; }
+        .h-trust { list-style: none; display: flex; gap: 26px; justify-content: center; flex-wrap: wrap; padding: 0; margin: 34px 0 0; }
+        .h-trust li { position: relative; padding-left: 26px; font-size: 15px; color: #1c2b33; }
+        .h-trust li::before { content: "\\2713"; position: absolute; left: 0; color: #296190; font-weight: 700; }
+        /* Google autocomplete dropdown above everything */
+        .pac-container { z-index: 10000; border-radius: 8px; margin-top: 4px; box-shadow: 0 12px 32px rgba(20,40,60,.18); border: 1px solid #e6e9ec; font-family: 'Jost',sans-serif; }
+        @media (max-width: 600px) { .h-form { flex-direction: column; } .h-form button { width: 100%; } }
+      
+
         #smhc-wrap { overflow-x: hidden; background: #ffffff; }
         .smhc-container { max-width: 1120px; margin: 0 auto; padding: 0 20px; }
 
@@ -503,11 +493,14 @@ export default function Home() {
 
         /* Contact — light grey (not dark), blue CTA carries the action */
         .smhc-contact { background: #f5f7f9; padding: 64px 0; border-top: 1px solid #e6e9ec; }
-        .smhc-contact-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 44px; align-items: center; }
-        .smhc-contact-copy h2 { color: #1c2b33; font-size: clamp(28px, 4vw, 42px); }
-        .smhc-contact-copy p { color: #4a5a62; font-size: 17px; line-height: 1.75; }
-        .smhc-contact-phone a { color: #296190 !important; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
-        .smhc-contact-card { border-top-color: #296190; }
+        .smhc-contact-cta { text-align: center; max-width: 640px; }
+        .smhc-contact-cta h2 { color: #1c2b33; font-size: clamp(28px, 4vw, 42px); margin-bottom: 12px; }
+        .smhc-contact-cta p { color: #4a5a62; font-size: 17px; line-height: 1.75; margin: 0 auto 24px; }
+        .smhc-cta-row { display: flex; align-items: center; justify-content: center; gap: 18px; flex-wrap: wrap; }
+        .smhc-cta-btn { display: inline-block; background: #296190; color: #fff; text-decoration: none; padding: 15px 34px; border-radius: 8px; font-size: 17px; font-weight: 600; }
+        .smhc-cta-btn:hover { background: #21506f; color: #fff; }
+        .smhc-cta-or { color: #4a5a62; font-size: 15px; }
+        .smhc-cta-or a { color: #296190; font-weight: 600; }
 
         /* Footer — clean white with top hairline */
         .smhc-footer { background: #ffffff; padding: 36px 0; border-top: 1px solid #e6e9ec; }
@@ -520,7 +513,7 @@ export default function Home() {
           .smhc-steps-5 { grid-template-columns: repeat(3,1fr); }
         }
         @media (max-width: 860px) {
-          .smhc-hero-grid, .smhc-contact-grid { grid-template-columns: 1fr; gap: 32px; }
+          .smhc-hero-grid { grid-template-columns: 1fr; gap: 32px; }
           .smhc-steps { grid-template-columns: 1fr; }
           .smhc-steps-5 { grid-template-columns: 1fr; }
           .smhc-trust-grid { grid-template-columns: 1fr; gap: 24px; }

@@ -36,13 +36,25 @@ export async function POST(request) {
     const address = (body.address || '').toString().trim().slice(0, 300);
     const timeline = (body.timeline || '').toString().trim().slice(0, 60);
     const condition = (body.condition || '').toString().trim().slice(0, 60);
+    const heard_about = (body.heard_about || '').toString().trim().slice(0, 60);
 
     if (!name || (!phone && !email) || !address) {
       return NextResponse.json({ ok: false, error: 'Missing required fields.' }, { status: 400 });
     }
+    const insert = {
+      name, phone, email, address, timeline, condition, heard_about,
+      source: 'landing', stage: 1,
+      user_agent: request.headers.get('user-agent') || '',
+    };
+    // Property facts pulled from Redfin on page 1 (all optional).
+    for (const k of ['property_type', 'sqft', 'beds', 'baths', 'year_built']) {
+      if (body[k] != null && body[k] !== '') insert[k] = body[k].toString().trim().slice(0, 60);
+    }
+    if (body.redfin_pulled) insert.redfin_pulled = true;
+
     const { data, error } = await supabaseAdmin
       .from('leads')
-      .insert({ name, phone, email, address, timeline, condition, source: 'landing', stage: 1, user_agent: request.headers.get('user-agent') || '' })
+      .insert(insert)
       .select('id').single();
     if (error) {
       console.error('insert error:', error);
