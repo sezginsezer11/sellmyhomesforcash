@@ -1,65 +1,61 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 
 export default function Home() {
-  const [address, setAddress] = useState('');
+  const [q, setQ] = useState('');
+  const [sugg, setSugg] = useState([]);
+  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const inputRef = useRef(null);
-  const acRef = useRef(null);
+  const [selUrl, setSelUrl] = useState('');
+  const timer = useRef(null);
+  const boxRef = useRef(null);
 
-  // Load Google Maps Places and attach autocomplete to the address field.
   useEffect(() => {
-    const key = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY;
-    if (!key) return;
-
-    function attach() {
-      if (!window.google || !inputRef.current || acRef.current) return;
-      acRef.current = new window.google.maps.places.Autocomplete(inputRef.current, {
-        types: ['address'],
-        componentRestrictions: { country: 'us' },
-        fields: ['formatted_address'],
-      });
-      acRef.current.addListener('place_changed', () => {
-        const p = acRef.current.getPlace();
-        if (p && p.formatted_address) setAddress(p.formatted_address);
-      });
-    }
-
-    if (window.google && window.google.maps) { attach(); return; }
-    const existing = document.getElementById('gmaps-js');
-    if (existing) { existing.addEventListener('load', attach); return; }
-    const s = document.createElement('script');
-    s.id = 'gmaps-js';
-    s.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places`;
-    s.async = true; s.defer = true;
-    s.onload = attach;
-    document.head.appendChild(s);
+    const onDoc = (e) => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('click', onDoc);
+    return () => document.removeEventListener('click', onDoc);
   }, []);
+
+  const onType = (e) => {
+    const val = e.target.value;
+    setQ(val); setSelUrl('');
+    if (timer.current) clearTimeout(timer.current);
+    if (val.trim().length < 3) { setSugg([]); setOpen(false); return; }
+    timer.current = setTimeout(async () => {
+      try {
+        const r = await fetch('/api/property?q=' + encodeURIComponent(val.trim()));
+        const d = await r.json();
+        setSugg(d.suggestions || []);
+        setOpen((d.suggestions || []).length > 0);
+      } catch { setSugg([]); setOpen(false); }
+    }, 300);
+  };
+
+  const pick = (s) => { setQ(s.label); setSelUrl(s.url); setSugg([]); setOpen(false); };
 
   const submit = async (e) => {
     e.preventDefault();
-    const addr = (inputRef.current?.value || address).trim();
-    if (!addr) { inputRef.current?.focus(); return; }
+    const addr = q.trim();
+    if (!addr) { return; }
     setBusy(true);
-    // Kick off Redfin lookup; don't block navigation on it (store result for page 2).
+    let facts = {};
     try {
-      const res = await fetch('/api/property', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ address: addr }),
-      });
-      const data = await res.json();
-      const facts = (data && data.facts) || {};
-      sessionStorage.setItem('smhc_address', addr);
-      sessionStorage.setItem('smhc_facts', JSON.stringify(facts));
-    } catch {
-      sessionStorage.setItem('smhc_address', addr);
-      sessionStorage.setItem('smhc_facts', '{}');
-    }
+      if (selUrl) {
+        const r = await fetch('/api/property', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: selUrl }),
+        });
+        const d = await r.json();
+        facts = d.facts || {};
+      }
+    } catch {}
+    sessionStorage.setItem('smhc_address', addr);
+    sessionStorage.setItem('smhc_facts', JSON.stringify(facts));
     window.location.href = '/get-offer';
   };
 
-  const onKey = (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(e); } };
+  const onKey = (e) => { if (e.key === 'Enter') { e.preventDefault(); if (open && sugg[0]) pick(sugg[0]); else submit(e); } };
 
   return (
     <div id="h-wrap"><span id="top"></span>
@@ -75,21 +71,28 @@ export default function Home() {
           <span className="h-eyebrow">A simpler way to sell</span>
           <h1>Sell Your House Fast to San Diego&rsquo;s Trusted Cash Buyers</h1>
           <p className="h-sub">Enter your address to receive competing, no-obligation
-          cash offers — sell as-is, no repairs, no fees.</p>
+          cash offers &mdash; sell as-is, no repairs, no fees.</p>
 
-          <form className="h-form" onSubmit={submit}>
-            <input
-              ref={inputRef}
-              type="text"
-              placeholder="Enter your home address"
-              defaultValue={address}
-              onKeyDown={onKey}
-              autoComplete="off"
-              aria-label="Home address"
-            />
-            <button type="submit" disabled={busy}>
-              {busy ? 'Checking…' : 'Get My Offer'}
-            </button>
+          <form className="h-form" onSubmit={submit} autoComplete="off">
+            <div className="h-ac" ref={boxRef}>
+              <input
+                type="text"
+                placeholder="Enter your home address"
+                value={q}
+                onChange={onType}
+                onKeyDown={onKey}
+                onFocus={() => { if (sugg.length) setOpen(true); }}
+                aria-label="Home address"
+              />
+              {open && (
+                <ul className="h-suggest">
+                  {sugg.map((s, i) => (
+                    <li key={i} onClick={() => pick(s)}>{s.label}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <button type="submit" disabled={busy}>{busy ? 'Checking…' : 'Get My Offer'}</button>
           </form>
           <p className="h-fine">No obligation. Your information stays private and is never sold.</p>
 
@@ -387,6 +390,11 @@ export default function Home() {
         .h-form button { padding: 17px 30px; background: #296190; color: #fff; border: 0; border-radius: 8px; font-family: 'Jost',sans-serif; font-size: 17px; font-weight: 600; cursor: pointer; white-space: nowrap; }
         .h-form button:hover { background: #21506f; }
         .h-form button:disabled { opacity: .6; cursor: default; }
+        .h-ac { position: relative; flex: 1; }
+        .h-ac input { width: 100%; box-sizing: border-box; }
+        .h-suggest { position: absolute; top: calc(100% + 4px); left: 0; right: 0; background: #fff; border: 1px solid #e6e9ec; border-radius: 8px; box-shadow: 0 12px 32px rgba(20,40,60,.18); list-style: none; margin: 0; padding: 6px; z-index: 50; text-align: left; }
+        .h-suggest li { padding: 11px 12px; border-radius: 6px; cursor: pointer; font-size: 15px; color: #1c2b33; }
+        .h-suggest li:hover { background: #f0f4f7; color: #296190; }
         .h-fine { font-size: 13px; color: #8a9aa2; margin: 14px 0 0; }
         .h-trust { list-style: none; display: flex; gap: 26px; justify-content: center; flex-wrap: wrap; padding: 0; margin: 34px 0 0; }
         .h-trust li { position: relative; padding-left: 26px; font-size: 15px; color: #1c2b33; }
