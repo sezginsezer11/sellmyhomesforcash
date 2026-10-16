@@ -40,6 +40,16 @@ export default function FixFlipCalculator() {
   const roi = cashWithDp > 0 ? net / cashWithDp * 100 : 0;
   const neg = net < 0;
 
+  // Per-field dollar amounts shown under each input.
+  const d_dp = dp;
+  const d_orig = origFee;
+  const d_close = closing;
+  const d_months = carry;        // total carrying over the chosen months
+  const d_sell = sellExp;
+  const d_agent = agentFee;
+  const d_tax = P * TAX;         // annual
+  const d_ins = P * INS;         // annual
+
   return (
     <div className="ff-page">
       <header className="ff-header">
@@ -76,15 +86,15 @@ export default function FixFlipCalculator() {
               <div className="ff-group-label">Financing</div>
               <div className="ff-two">
                 <div className="ff-field"><label htmlFor="dp">Down Payment</label>
-                  <div className="ff-inwrap"><input className="pct" id="dp" value={f.dp} onChange={up} inputMode="decimal" /><span className="suf">%</span></div></div>
+                  <div className="ff-inwrap"><input className="pct" id="dp" value={f.dp} onChange={up} inputMode="decimal" /><span className="suf">%</span></div></div><div className="ff-dollar">= {money(d_dp)}</div>
                 <div className="ff-field"><label htmlFor="rate">Interest Rate</label>
                   <div className="ff-inwrap"><input className="pct" id="rate" value={f.rate} onChange={up} inputMode="decimal" /><span className="suf">%</span></div></div>
               </div>
               <div className="ff-two">
                 <div className="ff-field"><label htmlFor="orig">Origination Points</label>
-                  <div className="ff-inwrap"><input className="pct" id="orig" value={f.orig} onChange={up} inputMode="decimal" /><span className="suf">%</span></div></div>
+                  <div className="ff-inwrap"><input className="pct" id="orig" value={f.orig} onChange={up} inputMode="decimal" /><span className="suf">%</span></div></div><div className="ff-dollar">= {money(d_orig)}</div>
                 <div className="ff-field"><label htmlFor="close">Closing Costs</label>
-                  <div className="ff-inwrap"><input className="pct" id="close" value={f.close} onChange={up} inputMode="decimal" /><span className="suf">%</span></div></div>
+                  <div className="ff-inwrap"><input className="pct" id="close" value={f.close} onChange={up} inputMode="decimal" /><span className="suf">%</span></div></div><div className="ff-dollar">= {money(d_close)}</div>
               </div>
             </div>
 
@@ -92,18 +102,18 @@ export default function FixFlipCalculator() {
               <div className="ff-group-label">Holding &amp; Sale</div>
               <div className="ff-two">
                 <div className="ff-field"><label htmlFor="months">Turnaround (months)</label>
-                  <div className="ff-inwrap"><input id="months" value={f.months} onChange={up} inputMode="decimal" /></div></div>
+                  <div className="ff-inwrap"><input id="months" value={f.months} onChange={up} inputMode="decimal" /></div></div><div className="ff-dollar">= {money(d_months)} total</div>
                 <div className="ff-field"><label htmlFor="sell">Selling Costs</label>
-                  <div className="ff-inwrap"><input className="pct" id="sell" value={f.sell} onChange={up} inputMode="decimal" /><span className="suf">%</span></div></div>
+                  <div className="ff-inwrap"><input className="pct" id="sell" value={f.sell} onChange={up} inputMode="decimal" /><span className="suf">%</span></div></div><div className="ff-dollar">= {money(d_sell)}</div>
               </div>
               <div className="ff-two">
                 <div className="ff-field"><label htmlFor="agent">Buyer&rsquo;s Agent Fee</label>
-                  <div className="ff-inwrap"><input className="pct" id="agent" value={f.agent} onChange={up} inputMode="decimal" /><span className="suf">%</span></div></div>
+                  <div className="ff-inwrap"><input className="pct" id="agent" value={f.agent} onChange={up} inputMode="decimal" /><span className="suf">%</span></div></div><div className="ff-dollar">= {money(d_agent)}</div>
                 <div className="ff-field"><label htmlFor="tax">Property Tax (annual)</label>
-                  <div className="ff-inwrap"><input className="pct" id="tax" value={f.tax} onChange={up} inputMode="decimal" /><span className="suf">%</span></div></div>
+                  <div className="ff-inwrap"><input className="pct" id="tax" value={f.tax} onChange={up} inputMode="decimal" /><span className="suf">%</span></div></div><div className="ff-dollar">= {money(d_tax)}/yr</div>
               </div>
               <div className="ff-field"><label htmlFor="ins">Insurance (annual)</label>
-                <div className="ff-inwrap"><input className="pct" id="ins" value={f.ins} onChange={up} inputMode="decimal" /><span className="suf">%</span></div></div>
+                <div className="ff-inwrap"><input className="pct" id="ins" value={f.ins} onChange={up} inputMode="decimal" /><span className="suf">%</span></div></div><div className="ff-dollar">= {money(d_ins)}/yr</div>
             </div>
 
             <button className="ff-reset" type="button" onClick={reset}>Reset to example</button>
@@ -177,6 +187,7 @@ export default function FixFlipCalculator() {
         .ff-field input.money { padding-left: 26px; }
         .ff-field input.pct { padding-right: 28px; }
         .ff-field input:focus { outline: none; border-color: #296190; box-shadow: 0 0 0 3px rgba(41,97,144,.18); }
+        .ff-dollar { font-size: 12.5px; color: #8a9aa2; margin-top: 5px; font-weight: 500; }
         .ff-two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
         .ff-reset { background: none; border: 1px solid #d5dbdf; color: #4a5a62; padding: 9px 16px; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 14px; cursor: pointer; margin-top: 4px; }
         .ff-reset:hover { border-color: #296190; color: #296190; }
