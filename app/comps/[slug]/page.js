@@ -47,6 +47,7 @@ export default function PublicComps() {
   const [comps, setComps] = useState([]);
   const [filter, setFilter] = useState('all');
   const [expanded, setExpanded] = useState({});
+  const [sort, setSort] = useState({ key: null, dir: 1 });
 
   useEffect(() => {
     let alive = true;
@@ -59,6 +60,34 @@ export default function PublicComps() {
 
   const priceOf = (c) => (groupOf(c.status) === 'sold' ? c.close_price : (c.current_price || c.orig_list_price)) || c.close_price || c.current_price || c.orig_list_price || '';
   const ppsfOf = (c) => (groupOf(c.status) === 'sold' ? (c.sold_ppsf || c.price_ppsf) : c.price_ppsf) || c.sold_ppsf || c.price_ppsf || '';
+
+  const sortKeyVal = (c, key) => {
+    switch (key) {
+      case 'address': return (c.address || '').toLowerCase();
+      case 'price': return toNum(priceOf(c)) || 0;
+      case 'beds': return toNum(c.beds) || 0;
+      case 'baths': return toNum(c.baths) || 0;
+      case 'sqft': return toNum(c.living_area) || 0;
+      case 'ppsf': return toNum(ppsfOf(c)) || 0;
+      case 'close_date': return c.close_date ? new Date(c.close_date).getTime() || 0 : 0;
+      case 'dom': return toNum(c.days_on_market) || 0;
+      case 'status': return (c.status || '').toLowerCase();
+      default: return 0;
+    }
+  };
+  const sortedComps = useMemo(() => {
+    if (!sort.key) return comps;
+    const arr = comps.slice();
+    arr.sort((a, b) => {
+      const va = sortKeyVal(a, sort.key), vb = sortKeyVal(b, sort.key);
+      if (va < vb) return -1 * sort.dir;
+      if (va > vb) return 1 * sort.dir;
+      return 0;
+    });
+    return arr;
+  }, [comps, sort]);
+  const toggleSort = (key) => setSort((s2) => s2.key === key ? { key, dir: -s2.dir } : { key, dir: 1 });
+  const arrow = (key) => sort.key === key ? (sort.dir === 1 ? ' \u25b4' : ' \u25be') : '';
 
   const grouped = useMemo(() => {
     const out = [];
@@ -152,6 +181,22 @@ export default function PublicComps() {
         <CompsMap comps={mapComps} subject={report.subject_address} priceOf={priceOf} ppsfOf={ppsfOf} />
       )}
 
+      {/* Filter buttons */}
+      <div className="cp-filters">
+        <button className={'cp-fbtn' + (filter === 'all' ? ' on' : '')} onClick={() => setFilter('all')}>All <span>{comps.length}</span></button>
+        {grouped.map((g) => (
+          <button key={g.key} className={'cp-fbtn' + (filter === g.key ? ' on' : '')} onClick={() => setFilter(g.key)}>{g.label} <span>{g.rows.length}</span></button>
+        ))}
+      </div>
+
+      {/* Grouped cards */}
+      {visibleGroups.map((g) => (
+        <section className="cp-group" key={g.key}>
+          <div className="cp-grouphead"><h2>{g.label}</h2></div>
+          <div className="cp-cards">{g.rows.map((c) => Card(c))}</div>
+        </section>
+      ))}
+
       {/* Stats */}
       {showStats && grouped.length > 0 && (
         <section className="cp-statsec">
@@ -184,22 +229,6 @@ export default function PublicComps() {
         </section>
       )}
 
-      {/* Filter buttons */}
-      <div className="cp-filters">
-        <button className={'cp-fbtn' + (filter === 'all' ? ' on' : '')} onClick={() => setFilter('all')}>All <span>{comps.length}</span></button>
-        {grouped.map((g) => (
-          <button key={g.key} className={'cp-fbtn' + (filter === g.key ? ' on' : '')} onClick={() => setFilter(g.key)}>{g.label} <span>{g.rows.length}</span></button>
-        ))}
-      </div>
-
-      {/* Grouped cards */}
-      {visibleGroups.map((g) => (
-        <section className="cp-group" key={g.key}>
-          <div className="cp-grouphead"><h2>{g.label}</h2></div>
-          <div className="cp-cards">{g.rows.map((c) => Card(c))}</div>
-        </section>
-      ))}
-
       {/* Comparison table */}
       <section className="cp-section">
         <div className="cp-sechead"><span className="cp-secnum">✦</span><h2>Quick Comparison</h2></div>
@@ -207,9 +236,21 @@ export default function PublicComps() {
           <h3 className="cp-tabletitle">Compare All {comps.length} {comps.length === 1 ? 'Property' : 'Properties'}</h3>
           <div className="cp-tablewrap">
             <table className="cp-table">
-              <thead><tr><th></th><th>Property</th><th>MLS #</th><th className="cp-r">Price</th><th className="cp-r">Beds</th><th className="cp-r">Baths</th><th className="cp-r">Sq Ft</th><th className="cp-r">$/SF</th><th className="cp-r">Close Date</th><th className="cp-r">DOM</th><th>Status</th></tr></thead>
+              <thead><tr>
+                <th></th>
+                <th className="cp-sortable" onClick={() => toggleSort('address')}>Property{arrow('address')}</th>
+                <th>MLS #</th>
+                <th className="cp-r cp-sortable" onClick={() => toggleSort('price')}>Price{arrow('price')}</th>
+                <th className="cp-r cp-sortable" onClick={() => toggleSort('beds')}>Beds{arrow('beds')}</th>
+                <th className="cp-r cp-sortable" onClick={() => toggleSort('baths')}>Baths{arrow('baths')}</th>
+                <th className="cp-r cp-sortable" onClick={() => toggleSort('sqft')}>Sq Ft{arrow('sqft')}</th>
+                <th className="cp-r cp-sortable" onClick={() => toggleSort('ppsf')}>$/SF{arrow('ppsf')}</th>
+                <th className="cp-r cp-sortable" onClick={() => toggleSort('close_date')}>Close Date{arrow('close_date')}</th>
+                <th className="cp-r cp-sortable" onClick={() => toggleSort('dom')}>DOM{arrow('dom')}</th>
+                <th className="cp-sortable" onClick={() => toggleSort('status')}>Status{arrow('status')}</th>
+              </tr></thead>
               <tbody>
-                {comps.map((c) => (
+                {sortedComps.map((c) => (
                   <tr key={c.id} className={c.starred ? 'cp-trstar' : ''}>
                     <td className="cp-trstarcell">{c.starred ? '★' : ''}</td>
                     <td className="cp-addr">{c.address}</td><td className="cp-mls">{c.mls_number}</td>
@@ -245,69 +286,81 @@ export default function PublicComps() {
 // ---- Google Map with pins + popups ----
 function CompsMap({ comps, subject, priceOf, ppsfOf }) {
   const ref = useRef(null);
-  const [ready, setReady] = useState(false);
+  const [status, setStatus] = useState('loading'); // loading | ok | nokey | noauth | nocoords
+
+  const pts = comps.filter((c) => c.lat && c.lng);
 
   useEffect(() => {
-    if (typeof window === 'undefined' || !MAPS_KEY) return;
-    if (window.google && window.google.maps) { setReady(true); return; }
-    const existing = document.getElementById('gmaps-js');
-    if (existing) { existing.addEventListener('load', () => setReady(true)); return; }
-    const s = document.createElement('script');
+    if (typeof window === 'undefined') return;
+    if (!MAPS_KEY) { setStatus('nokey'); return; }
+    if (!pts.length) { setStatus('nocoords'); return; }
+
+    // Catch Google's auth failure (invalid key / billing off) — it calls this global.
+    window.gm_authFailure = () => setStatus('noauth');
+
+    const init = () => {
+      if (!window.google || !window.google.maps || !ref.current) return;
+      try {
+        const g = window.google.maps;
+        const map = new g.Map(ref.current, { mapTypeControl: false, streetViewControl: false, fullscreenControl: false, styles: MAP_STYLE });
+        const bounds = new g.LatLngBounds();
+        const info = new g.InfoWindow();
+        pts.forEach((c) => {
+          const pos = { lat: Number(c.lat), lng: Number(c.lng) };
+          bounds.extend(pos);
+          const sold = groupOf(c.status) === 'sold';
+          const marker = new g.Marker({
+            position: pos, map, title: c.address,
+            label: c.starred ? { text: '\u2605', color: '#fff', fontSize: '13px' } : undefined,
+            icon: { path: g.SymbolPath.CIRCLE, scale: c.starred ? 11 : 8, fillColor: c.starred ? GOLD : (sold ? LAKE : '#2f7d4f'), fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 },
+          });
+          marker.addListener('click', () => {
+            const price = fmtFull(priceOf(c)); const ppsf = fmtPpsf(ppsfOf(c));
+            info.setContent(
+              '<div style="font-family:Jost,sans-serif;max-width:240px;color:#26333b">' +
+              '<div style="font-family:Georgia,serif;font-size:18px;font-weight:600;color:#344a57">' + (c.address || '') + '</div>' +
+              (price ? '<div style="font-size:16px;font-weight:600;margin:2px 0 6px">' + price + '</div>' : '') +
+              '<div style="font-size:12.5px;color:#4a5a62;margin-bottom:6px">' +
+                [c.beds && c.beds + ' bd', c.baths && c.baths + ' ba', c.living_area && fmtNum(c.living_area) + ' sqft', ppsf && ppsf + '/sf', c.status].filter(Boolean).join(' \u00b7 ') +
+              '</div>' +
+              (c.my_notes ? '<div style="font-size:12px;color:#5a6a72;line-height:1.5;border-top:1px solid #eee;padding-top:6px">' + c.my_notes + '</div>' : '') +
+              '</div>'
+            );
+            info.open(map, marker);
+          });
+        });
+        map.fitBounds(bounds, 60);
+        g.event.addListenerOnce(map, 'idle', () => { if (pts.length === 1) map.setZoom(15); });
+        setStatus('ok');
+      } catch (e) { console.error('map init error', e); setStatus('noauth'); }
+    };
+
+    if (window.google && window.google.maps) { init(); return; }
+    let s = document.getElementById('gmaps-js');
+    if (s) { s.addEventListener('load', init); return; }
+    s = document.createElement('script');
     s.id = 'gmaps-js';
-    s.src = 'https://maps.googleapis.com/maps/api/js?key=' + MAPS_KEY;
-    s.async = true; s.onload = () => setReady(true);
+    s.src = 'https://maps.googleapis.com/maps/api/js?key=' + MAPS_KEY + '&loading=async';
+    s.async = true;
+    s.onload = init;
+    s.onerror = () => setStatus('noauth');
     document.head.appendChild(s);
-  }, []);
+  }, [comps]);
 
-  useEffect(() => {
-    if (!ready || !ref.current || !window.google) return;
-    const g = window.google.maps;
-    const pts = comps.filter((c) => c.lat && c.lng);
-    if (!pts.length) return;
-    const map = new g.Map(ref.current, { mapTypeControl: false, streetViewControl: false, styles: MAP_STYLE });
-    const bounds = new g.LatLngBounds();
-    const info = new g.InfoWindow();
-    pts.forEach((c) => {
-      const pos = { lat: Number(c.lat), lng: Number(c.lng) };
-      bounds.extend(pos);
-      const sold = groupOf(c.status) === 'sold';
-      const marker = new g.Marker({
-        position: pos, map, title: c.address,
-        label: c.starred ? { text: '★', color: '#fff', fontSize: '13px' } : undefined,
-        icon: {
-          path: g.SymbolPath.CIRCLE, scale: c.starred ? 11 : 8,
-          fillColor: c.starred ? GOLD : (sold ? LAKE : '#2f7d4f'),
-          fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2,
-        },
-      });
-      marker.addListener('click', () => {
-        const price = fmtFull(priceOf(c)); const ppsf = fmtPpsf(ppsfOf(c));
-        info.setContent(
-          '<div style="font-family:Jost,sans-serif;max-width:240px;color:#26333b">' +
-          '<div style="font-family:Georgia,serif;font-size:18px;font-weight:600;color:#344a57">' + (c.address || '') + '</div>' +
-          (price ? '<div style="font-size:16px;font-weight:600;margin:2px 0 6px">' + price + '</div>' : '') +
-          '<div style="font-size:12.5px;color:#4a5a62;margin-bottom:6px">' +
-            [c.beds && c.beds + ' bd', c.baths && c.baths + ' ba', c.living_area && fmtNum(c.living_area) + ' sqft', ppsf && ppsf + '/sf', c.status].filter(Boolean).join(' · ') +
-          '</div>' +
-          (c.my_notes ? '<div style="font-size:12px;color:#5a6a72;line-height:1.5;border-top:1px solid #eee;padding-top:6px">' + c.my_notes + '</div>' : '') +
-          '</div>'
-        );
-        info.open(map, marker);
-      });
-    });
-    map.fitBounds(bounds, 60);
-    if (pts.length === 1) { map.setZoom(15); }
-  }, [ready, comps]);
+  // Don't render the section at all if there's simply no key and no coords to show.
+  if (status === 'nokey') return null;
 
   return (
     <section className="cp-mapsec">
-      <div className="cp-sechead"><span className="cp-secnum">◉</span><h2>Location Map</h2></div>
+      <div className="cp-sechead"><span className="cp-secnum">\u25c9</span><h2>Location Map</h2></div>
       <div className="cp-maplegend">
         <span><i style={{ background: LAKE }}></i> Sold</span>
         <span><i style={{ background: '#2f7d4f' }}></i> Active / Other</span>
         <span><i style={{ background: GOLD }}></i> Top comp</span>
       </div>
-      <div ref={ref} className="cp-map" />
+      <div ref={ref} className="cp-map" style={{ display: status === 'ok' || status === 'loading' ? 'block' : 'none' }} />
+      {status === 'nocoords' && <div className="cp-mapmsg">Map locations are being prepared. Re-import the sheet in admin to plot these addresses.</div>}
+      {status === 'noauth' && <div className="cp-mapmsg">The map could not load. The Google Maps key needs Maps JavaScript API enabled and billing turned on.</div>}
     </section>
   );
 }
@@ -337,6 +390,7 @@ const css = `
   .cp-maplegend { display: flex; gap: 18px; margin-bottom: 12px; font-size: 12.5px; color: #4a5a62; }
   .cp-maplegend i { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin-right: 5px; vertical-align: middle; border: 1.5px solid #fff; box-shadow: 0 0 0 1px #d5dbdf; }
   .cp-map { width: 100%; height: 440px; border-radius: 12px; overflow: hidden; border: 1px solid #eee9e1; box-shadow: 0 10px 30px rgba(52,74,87,.08); }
+  .cp-mapmsg { background: #fff; border: 1px solid #eee9e1; border-radius: 12px; padding: 28px; text-align: center; color: #7a8891; font-size: 14px; }
   /* Stats */
   .cp-statsec { margin-top: 44px; }
   .cp-statsec > h2 { font-family: 'Cormorant Garamond',serif; font-weight: 600; font-size: 32px; color: ${LAKE}; margin: 0 0 4px; }
@@ -400,6 +454,8 @@ const css = `
   .cp-tablewrap { overflow-x: auto; }
   .cp-table { border-collapse: collapse; width: 100%; font-size: 14px; }
   .cp-table th { background: ${LAKE}; color: #fff; text-align: left; padding: 13px 14px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; }
+  .cp-table th.cp-sortable { cursor: pointer; user-select: none; }
+  .cp-table th.cp-sortable:hover { background: #2b3e49; }
   .cp-table th.cp-r, .cp-table td.cp-r { text-align: right; }
   .cp-table td { border-bottom: 1px solid #f0ece4; padding: 14px; white-space: nowrap; color: #3a4a52; font-variant-numeric: tabular-nums; }
   .cp-trstar { background: #fffdf4; } .cp-trstarcell { color: ${GOLD}; text-align: center; padding: 0 !important; width: 24px; }
