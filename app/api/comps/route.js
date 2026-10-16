@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../lib/supabase';
 import { autocompleteAddress, lookupCompByUrl } from '../../../lib/redfin';
+import { readCompsSheet } from '../../../lib/sheets';
 
 function isAdminEmail(email) {
   const list = (process.env.ADMIN_EMAILS || 'sez@carmelvalley.com')
@@ -31,7 +32,7 @@ const COMP_FIELDS = [
   'mls_number', 'status', 'sub_type', 'my_notes', 'address', 'postal_code',
   'year_built', 'beds', 'baths', 'living_area', 'lot_size_sqft', 'sold_ppsf',
   'close_price', 'close_date', 'orig_list_price', 'price_ppsf', 'days_on_market',
-  'redfin_url', 'sort_order',
+  'redfin_url', 'sort_order', 'photo_url', 'public_remarks', 'current_price',
 ];
 
 // GET — address autocomplete | admin report list | admin one report | public report by slug
@@ -127,6 +128,29 @@ export async function POST(request) {
       const { data, error } = await supabaseAdmin.from('comps').insert(comp).select('*').single();
       if (error) { console.error(error); return NextResponse.json({ ok: false, error: 'Could not add comp.' }, { status: 500 }); }
       return NextResponse.json({ ok: true, comp: data });
+    }
+
+    if (action === 'import_sheet') {
+      const reportId = (body.report_id || '').toString();
+      const sheetUrl = (body.sheet_url || '').toString().trim();
+      if (!reportId || !sheetUrl) return NextResponse.json({ ok: false, error: 'report_id and sheet_url required.' }, { status: 400 });
+      let parsed;
+      try {
+        parsed = await readCompsSheet(sheetUrl);
+      } catch (e) {
+        return NextResponse.json({ ok: false, error: e.message || 'Could not read the sheet.' }, { status: 400 });
+      }
+      const rows = parsed.comps || [];
+      // Replace this report's comps with the sheet rows.
+      await supabaseAdmin.from('comps').delete().eq('report_id', reportId);
+      if (rows.length) {
+        const toInsert = rows.map((r, i) => ({ report_id: reportId, sort_order: i, ...r }));
+        await supabaseAdmin.from('comps').insert(toInsert);
+      }
+      await supabaseAdmin.from('comp_reports').update({ sheet_url: sheetUrl, updated_at: new Date().toISOString() }).eq('id', reportId);
+      const { data: comps } = await supabaseAdmin
+        .from('comps').select('*').eq('report_id', reportId).order('sort_order', { ascending: true });
+      return NextResponse.json({ ok: true, count: rows.length, comps: comps || [] });
     }
 
     return NextResponse.json({ ok: false, error: 'Unknown action.' }, { status: 400 });

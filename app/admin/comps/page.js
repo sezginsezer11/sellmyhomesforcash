@@ -43,6 +43,9 @@ export default function AdminComps() {
   const [selUrl, setSelUrl] = useState('');
   const [adding, setAdding] = useState(false);
   const [msg, setMsg] = useState('');
+  const [sheetUrl, setSheetUrl] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState('');
 
   const token = () => session?.access_token;
 
@@ -73,7 +76,7 @@ export default function AdminComps() {
     try {
       const r = await fetch('/api/comps?report=' + id, { headers: { Authorization: 'Bearer ' + token() } });
       const j = await r.json();
-      if (j.ok) { setActive(j.report); setComps(j.comps || []); }
+      if (j.ok) { setActive(j.report); setComps(j.comps || []); setSheetUrl(j.report.sheet_url || ''); }
     } catch {}
     setLoading(false);
   };
@@ -137,6 +140,22 @@ export default function AdminComps() {
         body: JSON.stringify({ comp_id: compId, [k]: v }),
       });
     } catch {}
+  };
+
+  const importSheet = async () => {
+    if (!active || !sheetUrl.trim()) return;
+    setImporting(true); setImportMsg('Reading sheet…');
+    try {
+      const r = await fetch('/api/comps', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+        body: JSON.stringify({ action: 'import_sheet', report_id: active.id, sheet_url: sheetUrl }),
+      });
+      const j = await r.json();
+      if (j.ok) { setComps(j.comps || []); setImportMsg('Imported ' + j.count + ' rows ✓'); }
+      else setImportMsg(j.error || 'Import failed.');
+    } catch { setImportMsg('Import error.'); }
+    setImporting(false);
+    setTimeout(() => setImportMsg(''), 4000);
   };
 
   const refreshComp = async (compId) => {
@@ -212,6 +231,19 @@ export default function AdminComps() {
               <a className="c-viewpub" href={'/comps/' + active.slug} target="_blank" rel="noopener">View public page ↗</a>
               <button className="c-copy" onClick={copyLink}>{copied ? 'Copied ✓' : 'Copy share link'}</button>
             </div>
+          </div>
+
+          <div className="c-sheetbox">
+            <div className="c-sheethead">Import comps from a Google Sheet</div>
+            <div className="c-sheetrow">
+              <input placeholder="Paste Google Sheet link…" value={sheetUrl}
+                onChange={(e) => setSheetUrl(e.target.value)} />
+              <button className="c-sheetbtn" onClick={importSheet} disabled={importing || !sheetUrl.trim()}>
+                {importing ? 'Importing…' : 'Import / Refresh from sheet'}
+              </button>
+              {importMsg && <span className="c-msg">{importMsg}</span>}
+            </div>
+            <div className="c-sheethint">Reads your standard MLS export columns. Re-import anytime to refresh.</div>
           </div>
 
           <div className="c-addbox">
@@ -299,6 +331,13 @@ const css = `
   .c-share { display: flex; gap: 10px; align-items: center; }
   .c-viewpub { color: #296190; text-decoration: none; font-size: 14px; font-weight: 600; }
   .c-copy { padding: 9px 16px; background: #1c5b34; color: #fff; border: 0; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13.5px; font-weight: 600; cursor: pointer; }
+  .c-sheetbox { background: #eef4f9; border: 1px solid #d3e2ee; border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
+  .c-sheethead { font-size: 13px; font-weight: 600; color: #296190; margin-bottom: 10px; }
+  .c-sheetrow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .c-sheetrow input { flex: 1; min-width: 260px; padding: 11px 12px; border: 1px solid #bcd2e4; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 14px; }
+  .c-sheetbtn { padding: 11px 18px; background: #296190; color: #fff; border: 0; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .c-sheetbtn:disabled { opacity: .5; cursor: default; }
+  .c-sheethint { font-size: 12px; color: #6a7a82; margin-top: 8px; }
   .c-addbox { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 16px; position: relative; }
   .c-addfield { position: relative; flex: 1; max-width: 460px; }
   .c-addfield input { width: 100%; padding: 12px 13px; border: 1px solid #d5dbdf; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 15px; box-sizing: border-box; }
