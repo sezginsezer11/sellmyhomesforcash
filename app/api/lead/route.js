@@ -80,13 +80,31 @@ export async function POST(request) {
     }
     if (body.redfin_pulled) insert.redfin_pulled = true;
 
-    const { data, error } = await supabaseAdmin
+    let { data, error } = await supabaseAdmin
       .from('leads')
       .insert(insert)
       .select('id, access_token').single();
+
+    // Resilience: if a newer column is missing in the DB, retry with the
+    // core columns so lead capture never fully breaks. Log what failed.
     if (error) {
-      console.error('insert error:', error);
-      return NextResponse.json({ ok: false, error: 'Could not save. Please try again.' }, { status: 500 });
+      console.error('insert error (full):', error?.message || error);
+      const core = {
+        name, phone, email, address, timeline, condition,
+        source: 'landing',
+        user_agent: request.headers.get('user-agent') || '',
+      };
+      for (const k of ['property_type', 'sqft', 'beds', 'baths', 'year_built']) {
+        if (insert[k] != null) core[k] = insert[k];
+      }
+      const retry = await supabaseAdmin
+        .from('leads').insert(core).select('id').single();
+      if (retry.error) {
+        console.error('insert error (core retry):', retry.error?.message || retry.error);
+        const diag = body.diag === true ? { detail: error?.message, retryDetail: retry.error?.message } : {};
+        return NextResponse.json({ ok: false, error: 'Could not save. Please try again.', ...diag }, { status: 500 });
+      }
+      return NextResponse.json({ ok: true, id: retry.data.id });
     }
     return NextResponse.json({ ok: true, id: data.id, token: data.access_token });
   } catch (e) {
@@ -147,11 +165,12 @@ export async function GET(request) {
     if (adminList) {
       const user = await requireUser(request);
       if (!user || !isAdminEmail(user.email)) return NextResponse.json({ ok: false, error: "Unauthorized." }, { status: 401 });
-      const { data, error } = await supabaseAdmin
-        .from('leads')
-        .select('*')
+      const includeDeleted = url.searchParams.get('deleted') === '1';
+      let q = supabaseAdmin.from('leads').select('*');
+      if (!includeDeleted) q = q.or('deleted.is.null,deleted.eq.false');
+      const { data, error } = await q
         .order('created_at', { ascending: false })
-        .limit(200);
+        .limit(300);
       if (error) return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 });
       return NextResponse.json({ ok: true, leads: data });
     }
@@ -264,6 +283,39 @@ export async function PUT(request) {
     return NextResponse.json({ ok: true });
   } catch (e) {
     console.error('PUT error:', e);
+    return NextResponse.json({ ok: false, error: 'Something went wrong.' }, { status: 500 });
+  }
+}
+
+
+// DELETE — admin soft-deletes a lead (hidden from the list), or hard-deletes with { hard: true }.
+export async function DELETE(request) {
+  try {
+    const user = await requireUser(request);
+    if (!user || !isAdminEmail(user.email)) {
+      return NextResponse.json({ ok: false, error: 'Unauthorized.' }, { status: 401 });
+    }
+    const body = await request.json().catch(() => ({}));
+    const id = (body.id || '').toString();
+    if (!validId(id)) return NextResponse.json({ ok: false, error: 'Invalid request.' }, { status: 400 });
+
+    if (body.restore === true) {
+      const { error } = await supabaseAdmin.from('leads').update({ deleted: false }).eq('id', id);
+      if (error) return NextResponse.json({ ok: false, error: 'Could not restore.' }, { status: 500 });
+      return NextResponse.json({ ok: true, restored: true });
+    }
+
+    if (body.hard === true) {
+      const { error } = await supabaseAdmin.from('leads').delete().eq('id', id);
+      if (error) return NextResponse.json({ ok: false, error: 'Could not delete.' }, { status: 500 });
+      return NextResponse.json({ ok: true, hard: true });
+    }
+
+    const { error } = await supabaseAdmin.from('leads').update({ deleted: true }).eq('id', id);
+    if (error) return NextResponse.json({ ok: false, error: 'Could not delete.' }, { status: 500 });
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    console.error('DELETE error:', e);
     return NextResponse.json({ ok: false, error: 'Something went wrong.' }, { status: 500 });
   }
 }

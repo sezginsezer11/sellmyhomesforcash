@@ -26,6 +26,7 @@ export default function AdminPage() {
   const [fFlag, setFFlag] = useState('all');
   const [sort, setSort] = useState('newest');
   const [noteDraft, setNoteDraft] = useState({});
+  const [confirmDel, setConfirmDel] = useState('');
   const [offerDraft, setOfferDraft] = useState({});
   const [copied, setCopied] = useState('');
 
@@ -72,6 +73,19 @@ export default function AdminPage() {
   const setStatus = (id, status) => { patch(id, { status }); setLeads(ls => ls.map(l => l.id === id ? { ...l, status } : l)); };
   const setClientStatus = (id, client_status) => { patch(id, { client_status }); setLeads(ls => ls.map(l => l.id === id ? { ...l, client_status } : l)); };
   const saveNote = (id) => { const notes = noteDraft[id] ?? ''; patch(id, { notes }); setLeads(ls => ls.map(l => l.id === id ? { ...l, notes } : l)); };
+
+  const deleteLead = async (id) => {
+    const token = session?.access_token; if (!token) return;
+    // optimistic remove
+    setLeads(ls => ls.filter(l => l.id !== id));
+    try {
+      await fetch('/api/lead', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ id }),
+      });
+    } catch {}
+  };
 
   const saveOffer = (id) => {
     const o = offerDraft[id] || {};
@@ -277,6 +291,18 @@ export default function AdminPage() {
                   onChange={e=>setNoteDraft(d=>({...d,[l.id]:e.target.value}))} rows={2} />
                 <button onClick={()=>saveNote(l.id)}>Save note</button>
               </div>
+
+              <div className="a-footerrow">
+                {confirmDel === l.id ? (
+                  <span className="a-delconfirm">
+                    Delete this lead?
+                    <button className="a-del-yes" onClick={()=>{ deleteLead(l.id); setConfirmDel(''); }}>Yes, delete</button>
+                    <button className="a-del-no" onClick={()=>setConfirmDel('')}>Cancel</button>
+                  </span>
+                ) : (
+                  <button className="a-del" onClick={()=>setConfirmDel(l.id)}>Delete lead</button>
+                )}
+              </div>
             </div>
           );})}
         </div>
@@ -345,5 +371,13 @@ const css = `
   .a-notes textarea { flex: 1; padding: 9px 11px; border: 1px solid #d5dbdf; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13.5px; resize: vertical; box-sizing: border-box; }
   .a-notes button { padding: 8px 14px; background: none; border: 1px solid #296190; color: #296190; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13px; font-weight: 600; cursor: pointer; align-self: flex-start; white-space: nowrap; }
   .a-notes button:hover { background: #296190; color: #fff; }
+  .a-footerrow { display: flex; justify-content: flex-end; margin-top: 10px; padding-top: 10px; border-top: 1px solid #f0f3f5; }
+  .a-del { background: none; border: 0; color: #8a2020; font-family: 'Jost',sans-serif; font-size: 12.5px; cursor: pointer; opacity: .7; }
+  .a-del:hover { opacity: 1; text-decoration: underline; }
+  .a-delconfirm { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #8a2020; }
+  .a-del-yes { background: #8a2020; color: #fff; border: 0; border-radius: 5px; padding: 6px 12px; font-family: 'Jost',sans-serif; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+  .a-del-yes:hover { background: #6e1818; }
+  .a-del-no { background: none; border: 1px solid #d5dbdf; color: #4a5a62; border-radius: 5px; padding: 6px 12px; font-family: 'Jost',sans-serif; font-size: 12.5px; cursor: pointer; }
+  .a-del-no:hover { border-color: #296190; color: #296190; }
   @media (max-width: 640px) { .a-offer-grid { grid-template-columns: 1fr; } }
 `;
