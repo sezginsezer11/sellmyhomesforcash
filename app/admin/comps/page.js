@@ -81,6 +81,16 @@ export default function AdminComps() {
     setLoading(false);
   };
 
+  const setReportToggle = async (key, val) => {
+    setActive((a) => ({ ...a, [key]: val }));
+    try {
+      await fetch('/api/comps', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+        body: JSON.stringify({ report_id: active.id, report_fields: { [key]: val } }),
+      });
+    } catch {}
+  };
+
   const createReport = async () => {
     if (!newSubject.trim()) return;
     const r = await fetch('/api/comps', {
@@ -279,6 +289,11 @@ export default function AdminComps() {
             </div>
           </div>
 
+          <div className="c-toggles">
+            <label><input type="checkbox" checked={active.show_stats !== false} onChange={(e) => setReportToggle('show_stats', e.target.checked)} /> Show statistics section</label>
+            <label><input type="checkbox" checked={active.show_map !== false} onChange={(e) => setReportToggle('show_map', e.target.checked)} /> Show map</label>
+          </div>
+
           <div className="c-sheetbox">
             <div className="c-sheethead">Import comps from a Google Sheet</div>
             <div className="c-sheetrow">
@@ -393,6 +408,9 @@ const css = `
   .c-reporthead { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
   .c-reporthead h2 { font-family: 'Cormorant Garamond',serif; font-size: 26px; margin: 0; }
   .c-share { display: flex; gap: 10px; align-items: center; }
+  .c-toggles { display: flex; gap: 22px; margin-bottom: 16px; flex-wrap: wrap; }
+  .c-toggles label { display: flex; align-items: center; gap: 7px; font-size: 13.5px; color: #4a5a62; cursor: pointer; }
+  .c-toggles input { width: 16px; height: 16px; cursor: pointer; }
   .c-viewpub { color: #296190; text-decoration: none; font-size: 14px; font-weight: 600; }
   .c-copy { padding: 9px 16px; background: #1c5b34; color: #fff; border: 0; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13.5px; font-weight: 600; cursor: pointer; }
   .c-sheetbox { background: #eef4f9; border: 1px solid #d3e2ee; border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }

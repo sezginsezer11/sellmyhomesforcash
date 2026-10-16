@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../lib/supabase';
 import { autocompleteAddress, lookupCompByUrl } from '../../../lib/redfin';
-import { readCompsSheet } from '../../../lib/sheets';
+import { readCompsSheet, geocodeAddress } from '../../../lib/sheets';
 
 function isAdminEmail(email) {
   const list = (process.env.ADMIN_EMAILS || 'sez@carmelvalley.com')
@@ -33,7 +33,7 @@ const COMP_FIELDS = [
   'year_built', 'beds', 'baths', 'living_area', 'lot_size_sqft', 'sold_ppsf',
   'close_price', 'close_date', 'orig_list_price', 'price_ppsf', 'days_on_market',
   'redfin_url', 'sort_order', 'photo_url', 'public_remarks', 'current_price',
-  'starred', 'photo_override',
+  'starred', 'photo_override', 'lat', 'lng',
 ];
 
 // GET — address autocomplete | admin report list | admin one report | public report by slug
@@ -142,6 +142,13 @@ export async function POST(request) {
         return NextResponse.json({ ok: false, error: e.message || 'Could not read the sheet.' }, { status: 400 });
       }
       const rows = parsed.comps || [];
+      // Geocode each address (cached) so the map can place pins.
+      for (const r of rows) {
+        if (r.address) {
+          const geo = await geocodeAddress(r.address, r.postal_code);
+          if (geo) { r.lat = geo.lat; r.lng = geo.lng; }
+        }
+      }
       // Replace this report's comps with the sheet rows.
       await supabaseAdmin.from('comps').delete().eq('report_id', reportId);
       if (rows.length) {
@@ -201,6 +208,9 @@ export async function PUT(request) {
       for (const k of ['subject_address', 'subject_zip', 'client_name', 'title', 'intro']) {
         if (body.report_fields[k] != null) rf[k] = body.report_fields[k].toString().slice(0, 2000);
       }
+      for (const k of ['show_stats', 'show_map']) {
+        if (body.report_fields[k] != null) rf[k] = body.report_fields[k] === true || body.report_fields[k] === 'true';
+      }
       rf.updated_at = new Date().toISOString();
       const { error } = await supabaseAdmin.from('comp_reports').update(rf).eq('id', body.report_id);
       if (error) return NextResponse.json({ ok: false, error: 'Could not save report.' }, { status: 500 });
@@ -227,6 +237,7 @@ export async function PUT(request) {
       if (body[k] == null) continue;
       if (k === 'sort_order') update[k] = Number(body[k]) || 0;
       else if (k === 'starred') update[k] = body[k] === true || body[k] === 'true';
+      else if (k === 'lat' || k === 'lng') update[k] = Number(body[k]) || null;
       else update[k] = body[k].toString().slice(0, 2000);
     }
     if (Object.keys(update).length === 0) return NextResponse.json({ ok: false, error: 'Nothing to update.' }, { status: 400 });
