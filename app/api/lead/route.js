@@ -60,12 +60,16 @@ export async function POST(request) {
     const condition = (body.condition || '').toString().trim().slice(0, 60);
     const heard_about = (body.heard_about || '').toString().trim().slice(0, 60);
 
-    if (!name || (!phone && !email) || !address) {
-      return NextResponse.json({ ok: false, error: 'Missing required fields.' }, { status: 400 });
+    // Early capture: an address alone is enough to create a "potential seller"
+    // lead. Name/phone/email are filled in on later steps via PATCH.
+    if (!address) {
+      return NextResponse.json({ ok: false, error: 'Please enter a property address.' }, { status: 400 });
     }
     const insert = {
       name, phone, email, address, timeline, condition, heard_about,
       source: 'landing', stage: 1,
+      lead_type: 'potential seller',
+      submitted: body.submitted === true,
       client_status: 'Reviewing',
       access_token: newToken(),
       user_agent: request.headers.get('user-agent') || '',
@@ -102,10 +106,25 @@ export async function PATCH(request) {
     for (const key of DETAIL_FIELDS) {
       if (body[key] != null) update[key] = body[key].toString().trim().slice(0, 500);
     }
+    // Contact fields can be filled in on later steps of the funnel.
+    if (body.name != null) update.name = body.name.toString().trim().slice(0, 120);
+    if (body.phone != null) update.phone = body.phone.toString().trim().slice(0, 40);
+    if (body.email != null) update.email = body.email.toString().trim().slice(0, 160);
+    if (body.heard_about != null) update.heard_about = body.heard_about.toString().trim().slice(0, 60);
+    if (body.property_type != null) update.property_type = body.property_type.toString().trim().slice(0, 60);
+    if (body.sqft != null) update.sqft = body.sqft.toString().trim().slice(0, 60);
+    if (body.beds != null) update.beds = body.beds.toString().trim().slice(0, 60);
+    if (body.baths != null) update.baths = body.baths.toString().trim().slice(0, 60);
+    if (body.year_built != null) update.year_built = body.year_built.toString().trim().slice(0, 60);
+    if (body.submitted === true) update.submitted = true;
     if (body.callback_requested != null) {
       update.callback_requested = body.callback_requested.toString().trim().slice(0, 200);
     }
     if (body.finalize === true) update.details_completed = true;
+
+    if (Object.keys(update).length === 0) {
+      return NextResponse.json({ ok: true });
+    }
 
     const { error } = await supabaseAdmin.from('leads').update(update).eq('id', id);
     if (error) {

@@ -50,9 +50,29 @@ export default function Home() {
         facts = d.facts || {};
       }
     } catch {}
+    // Create a partial "potential seller" lead immediately — captured the
+    // moment they enter an address, even if they go no further.
+    let leadId = '';
+    try {
+      const lr = await fetch('/api/lead', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          address: addr,
+          property_type: facts.property_type || '', sqft: facts.sqft || '',
+          beds: facts.beds || '', baths: facts.baths || '', year_built: facts.year_built || '',
+          redfin_pulled: !!selUrl,
+        }),
+      });
+      const ld = await lr.json();
+      if (ld.ok && ld.id) leadId = ld.id;
+    } catch {}
+
     sessionStorage.setItem('smhc_address', addr);
     sessionStorage.setItem('smhc_facts', JSON.stringify(facts));
-    window.location.href = '/get-offer';
+    if (leadId) sessionStorage.setItem('smhc_lead_id', leadId);
+    window.location.href = leadId
+      ? '/get-offer?id=' + encodeURIComponent(leadId)
+      : '/get-offer';
   };
 
   const onKey = (e) => { if (e.key === 'Enter') { e.preventDefault(); if (open && sugg[0]) pick(sugg[0]); else submit(e); } };

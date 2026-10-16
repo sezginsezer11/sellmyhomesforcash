@@ -111,6 +111,8 @@ export default function AdminPage() {
     if (term) r = r.filter(l => [l.name, l.address, l.phone, l.email].some(x => (x || '').toLowerCase().includes(term)));
     if (fStage !== 'all') r = r.filter(l => String(l.stage || 1) === fStage);
     if (fStatus !== 'all') r = r.filter(l => (l.status || 'New') === fStatus);
+    if (fFlag === 'submitted') r = r.filter(l => l.submitted);
+    if (fFlag === 'potential') r = r.filter(l => !l.submitted);
     if (fFlag === 'details') r = r.filter(l => l.details_completed);
     if (fFlag === 'callback') r = r.filter(l => l.callback_requested);
     if (sort === 'newest') r.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
@@ -122,7 +124,7 @@ export default function AdminPage() {
   const exportCSV = () => {
     const cols = ['created_at','name','phone','email','address','status','client_status','stage','timeline','condition',
       'property_type','beds','baths','sqft','year_built','occupancy','reason_selling','heard_about',
-      'offer_amount','est_closing_costs','estimated_net','callback_requested','details_completed','notes'];
+      'lead_type','submitted','offer_amount','est_closing_costs','estimated_net','callback_requested','details_completed','notes'];
     const esc = (v) => '"' + (v == null ? '' : String(v).replace(/"/g, '""')) + '"';
     const rows = [cols.join(',')].concat(view.map(l => cols.map(c => esc(l[c])).join(',')));
     const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
@@ -172,6 +174,8 @@ export default function AdminPage() {
         </select>
         <select value={fFlag} onChange={e=>setFFlag(e.target.value)}>
           <option value="all">All leads</option>
+          <option value="submitted">Submitted</option>
+          <option value="potential">Potential (not submitted)</option>
           <option value="details">Details completed</option>
           <option value="callback">Callback requested</option>
         </select>
@@ -199,6 +203,7 @@ export default function AdminPage() {
                   <div className="a-meta">{l.address}</div>
                   <div className="a-meta">{l.phone}{l.phone && l.email ? ' · ' : ''}{l.email}</div>
                   <div className="a-meta a-dim">{new Date(l.created_at).toLocaleString()}
+                    {!l.submitted ? <span className="a-pot"> · ◷ Potential (not submitted)</span> : <span className="a-ok"> · submitted ✓</span>}
                     {l.callback_requested ? <span className="a-cb"> · ↩ Callback</span> : null}
                     {l.details_completed ? <span className="a-ok"> · details ✓</span> : null}
                   </div>
@@ -310,6 +315,7 @@ const css = `
   .a-meta { font-size: 13px; color: #4a5a62; margin-top: 2px; }
   .a-dim { color: #8a9aa2; }
   .a-cb { color: #b26a00; font-weight: 600; }
+  .a-pot { color: #8a6d00; font-weight: 600; }
   .a-ok { color: #1c5b34; }
   .a-status { padding: 7px 10px; border: 1px solid #d5dbdf; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13px; background: #fff; }
   .a-stages { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
