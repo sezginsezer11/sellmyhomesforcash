@@ -126,6 +126,8 @@ export async function GET(request) {
 }
 
 // PUT — admin advances a lead's stage (requires auth token).
+const STATUSES = ['New', 'Contacted', 'Working', 'Closed', 'Dead'];
+
 export async function PUT(request) {
   try {
     const user = await requireUser(request);
@@ -133,11 +135,26 @@ export async function PUT(request) {
 
     const body = await request.json();
     const id = (body.id || '').toString();
-    const stage = parseInt(body.stage, 10);
-    if (!validId(id) || !(stage >= 1 && stage <= 5)) {
-      return NextResponse.json({ ok: false, error: 'Invalid request.' }, { status: 400 });
+    if (!validId(id)) return NextResponse.json({ ok: false, error: 'Invalid request.' }, { status: 400 });
+
+    const update = {};
+    if (body.stage != null) {
+      const stage = parseInt(body.stage, 10);
+      if (!(stage >= 1 && stage <= 5)) return NextResponse.json({ ok: false, error: 'Invalid stage.' }, { status: 400 });
+      update.stage = stage;
     }
-    const { error } = await supabaseAdmin.from('leads').update({ stage }).eq('id', id);
+    if (body.status != null) {
+      const st = body.status.toString();
+      if (!STATUSES.includes(st)) return NextResponse.json({ ok: false, error: 'Invalid status.' }, { status: 400 });
+      update.status = st;
+    }
+    if (body.notes != null) {
+      update.notes = body.notes.toString().slice(0, 4000);
+    }
+    if (Object.keys(update).length === 0) {
+      return NextResponse.json({ ok: false, error: 'Nothing to update.' }, { status: 400 });
+    }
+    const { error } = await supabaseAdmin.from('leads').update(update).eq('id', id);
     if (error) return NextResponse.json({ ok: false, error: 'Update failed.' }, { status: 500 });
     return NextResponse.json({ ok: true });
   } catch (e) {
