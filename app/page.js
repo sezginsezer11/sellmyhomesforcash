@@ -356,6 +356,9 @@ export default function Home() {
         <div className="smhc-container">
           <p className="smhc-foot-name">Cash Home Offer</p>
           <p className="smhc-foot-fine">
+            <a href="/fix-and-flip-calculator">Fix &amp; Flip Calculator</a>
+          </p>
+          <p className="smhc-foot-fine">
             Sez Sezer &middot; Keller Williams Realty &middot; DRE#&nbsp;01988197 &middot; San Diego, California &middot; <a href="tel:+18584366585">(858) 436-6585</a>
           </p>
           <p className="smhc-foot-fine">
