@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { supabaseBrowser } from '../../lib/supabase-browser';
 
 const CHECKLIST = [
   'Zero Fees to Sell Your House',
@@ -17,6 +18,15 @@ export default function GetOffer() {
   const [c, setC] = useState({ name: '', phone: '', email: '', heard_about: '', company: '' });
   const [status, setStatus] = useState('idle');
   const [errMsg, setErrMsg] = useState('');
+
+  // step: 'form' -> 'account'
+  const [step, setStep] = useState('form');
+  const [leadId, setLeadId] = useState('');
+  const [leadToken, setLeadToken] = useState('');
+  const [pw, setPw] = useState('');
+  const [pw2, setPw2] = useState('');
+  const [acctStatus, setAcctStatus] = useState('idle');
+  const [acctErr, setAcctErr] = useState('');
 
   useEffect(() => {
     const a = sessionStorage.getItem('smhc_address') || '';
@@ -54,9 +64,54 @@ export default function GetOffer() {
       if (data.ok && data.id) {
         sessionStorage.removeItem('smhc_address');
         sessionStorage.removeItem('smhc_facts');
-        window.location.href = '/details?id=' + encodeURIComponent(data.id) + '&resume=1';
+        setLeadId(data.id);
+        setLeadToken(data.token || '');
+        setStatus('idle');
+        // If they gave an email, offer account creation. Otherwise go straight on.
+        if (c.email) setStep('account');
+        else window.location.href = '/details?id=' + encodeURIComponent(data.id) + '&resume=1';
       } else { setStatus('error'); setErrMsg(data.error || 'Please try again.'); }
     } catch { setStatus('error'); setErrMsg('Network error. Please try again.'); }
+  };
+
+  const goToDetails = () => {
+    window.location.href = '/details?id=' + encodeURIComponent(leadId) + '&resume=1';
+  };
+
+  const createAccount = async (e) => {
+    e.preventDefault();
+    setAcctErr('');
+    if (pw.length < 6) { setAcctErr('Password must be at least 6 characters.'); return; }
+    if (pw !== pw2) { setAcctErr('Passwords do not match.'); return; }
+    setAcctStatus('working');
+    try {
+      const { data, error } = await supabaseBrowser.auth.signUp({
+        email: c.email, password: pw,
+      });
+      if (error) {
+        // Existing account — send them to log in.
+        if (/already|registered|exists/i.test(error.message)) {
+          setAcctErr('An account with this email already exists. You can log in to track your offer.');
+          setAcctStatus('exists');
+          return;
+        }
+        setAcctErr(error.message); setAcctStatus('idle'); return;
+      }
+      // Link the lead to this new account (if a session exists — i.e. email confirm off).
+      const token = data?.session?.access_token;
+      if (token) {
+        await fetch('/api/lead', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+          body: JSON.stringify({ action: 'claim', id: leadId }),
+        });
+      }
+      setAcctStatus('done');
+      // Continue to the detail questions; their account is now set.
+      setTimeout(goToDetails, 900);
+    } catch {
+      setAcctErr('Something went wrong. Please try again.'); setAcctStatus('idle');
+    }
   };
 
   const gotFacts = facts.sqft || facts.beds || facts.baths || facts.year_built || facts.property_type;
@@ -72,6 +127,8 @@ export default function GetOffer() {
 
       <div className="g-grid">
         <div className="g-card">
+          {step === 'form' && (
+          <>
           <h1>Where should we send the offer?</h1>
           {address && <p className="g-addr">📍 {address}</p>}
 
@@ -133,6 +190,54 @@ export default function GetOffer() {
             <p className="g-tos">By submitting, you agree to be contacted by phone,
             text, or email about your offer. No obligation.</p>
           </form>
+          </>
+          )}
+
+          {step === 'account' && (
+          <>
+          <h1>Create your account</h1>
+          <p className="g-addr">Your request is in! Set a password to track your offer,
+            see updates, and view your offer details anytime.</p>
+
+          {acctStatus === 'done' ? (
+            <div className="g-done">
+              <div className="g-done-check">✓</div>
+              <p>Account created! Taking you to a few quick questions…</p>
+            </div>
+          ) : (
+          <form onSubmit={createAccount} onKeyDown={noEnter}>
+            <div className="g-field">
+              <label>Email</label>
+              <input value={c.email} readOnly className="g-readonly" />
+            </div>
+            <div className="g-field">
+              <label>Create a password <span className="g-req">(6+ characters)</span></label>
+              <input type="password" value={pw} onChange={(e) => setPw(e.target.value)}
+                autoComplete="new-password" />
+            </div>
+            <div className="g-field">
+              <label>Confirm password</label>
+              <input type="password" value={pw2} onChange={(e) => setPw2(e.target.value)}
+                autoComplete="new-password" />
+            </div>
+
+            {acctErr && <p className="g-err" role="alert">{acctErr}</p>}
+
+            {acctStatus === 'exists' ? (
+              <a className="g-btn g-btn-link" href={'/login?next=/my-offer'}>Log in to track your offer</a>
+            ) : (
+              <button type="submit" className="g-btn" disabled={acctStatus === 'working'}>
+                {acctStatus === 'working' ? 'Creating…' : 'Create account & continue'}
+              </button>
+            )}
+
+            <button type="button" className="g-skip" onClick={goToDetails}>
+              Skip for now
+            </button>
+          </form>
+          )}
+          </>
+          )}
         </div>
 
         <div className="g-side">
@@ -152,7 +257,7 @@ export default function GetOffer() {
         .g-grid { max-width: 1080px; margin: 0 auto; padding: 34px 20px 60px; display: grid; grid-template-columns: 1.3fr 0.7fr; gap: 34px; align-items: start; }
         .g-card { background: #fff; border: 1px solid #e6e9ec; border-top: 4px solid #296190; border-radius: 12px; padding: 30px; box-shadow: 0 12px 32px rgba(20,40,60,.08); }
         .g-card h1 { font-family: 'Cormorant Garamond',serif; font-size: 30px; margin: 0 0 8px; }
-        .g-addr { color: #4a5a62; font-size: 15px; margin: 0 0 20px; }
+        .g-addr { color: #4a5a62; font-size: 15px; margin: 0 0 20px; line-height: 1.6; }
         .g-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
         .g-field { margin-bottom: 14px; }
         .g-full { grid-column: 1 / -1; }
@@ -160,13 +265,20 @@ export default function GetOffer() {
         .g-req { color: #296190; font-weight: 400; }
         .g-field input, .g-field select { width: 100%; padding: 12px 13px; border: 1px solid #d5dbdf; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 15px; color: #1c2b33; background: #fff; box-sizing: border-box; }
         .g-field input:focus, .g-field select:focus { outline: none; border-color: #296190; box-shadow: 0 0 0 3px rgba(41,97,144,.18); }
+        .g-readonly { background: #f5f7f9 !important; color: #6a7a82 !important; }
         .g-facts { background: #f5f7f9; border: 1px solid #e6e9ec; border-radius: 8px; padding: 16px; margin: 8px 0 16px; }
         .g-facts-head { font-size: 13px; color: #296190; font-weight: 600; margin-bottom: 10px; }
-        .g-btn { width: 100%; padding: 15px; background: #296190; color: #fff; border: 0; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 17px; font-weight: 600; cursor: pointer; margin-top: 6px; }
+        .g-btn { display: block; width: 100%; text-align: center; padding: 15px; background: #296190; color: #fff; border: 0; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 17px; font-weight: 600; cursor: pointer; margin-top: 6px; text-decoration: none; box-sizing: border-box; }
         .g-btn:hover { background: #21506f; }
         .g-btn:disabled { opacity: .6; cursor: default; }
+        .g-btn-link { line-height: 1.2; }
+        .g-skip { display: block; width: 100%; background: none; border: 0; color: #6a7a82; font-family: 'Jost',sans-serif; font-size: 14px; cursor: pointer; margin-top: 14px; text-decoration: underline; }
+        .g-skip:hover { color: #296190; }
         .g-err { background: #fbeaea; color: #8a2020; padding: 10px 12px; border-radius: 6px; font-size: 14px; margin: 0 0 12px; }
         .g-tos { font-size: 12px; color: #8a9aa2; text-align: center; margin: 12px 0 0; line-height: 1.6; }
+        .g-done { text-align: center; padding: 20px 0; }
+        .g-done-check { width: 54px; height: 54px; border-radius: 50%; background: #2f9e5f; color: #fff; font-size: 28px; line-height: 54px; margin: 0 auto 14px; }
+        .g-done p { color: #1c5b34; font-size: 16px; }
         .g-side { padding-top: 8px; }
         .g-side h2 { font-family: 'Cormorant Garamond',serif; font-size: 26px; line-height: 1.25; margin: 0 0 18px; }
         .g-check { list-style: none; padding: 0; margin: 0; }

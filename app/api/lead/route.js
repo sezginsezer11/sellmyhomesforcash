@@ -13,9 +13,9 @@ const SENSITIVE = ['mortgage_status', 'foreclosure', 'liens_taxes'];
 // Public prefill/read: non-sensitive detail fields + stage (for the tracker).
 const PREFILL_FIELDS = DETAIL_FIELDS.filter((f) => !SENSITIVE.includes(f)).concat(['stage']);
 
-// Fields the seller sees on their private /my-offer dashboard (keyed by secret token).
+// Fields the seller sees on their /my-offer dashboard (by secret token OR when logged in).
 const CLIENT_FIELDS = [
-  'name', 'address', 'property_type', 'beds', 'baths', 'sqft', 'year_built',
+  'id', 'name', 'address', 'property_type', 'beds', 'baths', 'sqft', 'year_built',
   'stage', 'client_status', 'offer_amount', 'offer_details',
   'est_closing_costs', 'estimated_net', 'created_at',
 ];
@@ -28,7 +28,7 @@ function newToken() {
   return crypto.randomBytes(24).toString('hex'); // 48-char secret link
 }
 
-// Verify the caller is a logged-in Supabase user (admin). Returns user or null.
+// Verify the caller is a logged-in Supabase user. Returns user or null.
 async function requireUser(request) {
   const auth = request.headers.get('authorization') || '';
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
@@ -36,6 +36,14 @@ async function requireUser(request) {
   const { data, error } = await supabaseAdmin.auth.getUser(token);
   if (error || !data?.user) return null;
   return data.user;
+}
+
+// Allowlist of admin emails (comma-separated in ADMIN_EMAILS). Only these can
+// list all leads or edit offers. Everyone else is treated as a seller.
+function isAdminEmail(email) {
+  const list = (process.env.ADMIN_EMAILS || "sez@carmelvalley.com")
+    .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  return !!email && list.includes(email.toLowerCase());
 }
 
 // STEP 1 — create the lead.
@@ -111,7 +119,7 @@ export async function PATCH(request) {
   }
 }
 
-// GET — admin list (token) | client dashboard by secret token | public prefill by id.
+// GET — admin list | seller's own lead (logged in) | client dashboard by token | public prefill by id.
 export async function GET(request) {
   try {
     const url = new URL(request.url);
@@ -119,7 +127,7 @@ export async function GET(request) {
 
     if (adminList) {
       const user = await requireUser(request);
-      if (!user) return NextResponse.json({ ok: false, error: 'Unauthorized.' }, { status: 401 });
+      if (!user || !isAdminEmail(user.email)) return NextResponse.json({ ok: false, error: "Unauthorized." }, { status: 401 });
       const { data, error } = await supabaseAdmin
         .from('leads')
         .select('*')
@@ -127,6 +135,25 @@ export async function GET(request) {
         .limit(200);
       if (error) return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 });
       return NextResponse.json({ ok: true, leads: data });
+    }
+
+    // Seller account dashboard: logged-in seller fetching their own lead(s).
+    if (url.searchParams.get('me') === '1') {
+      const user = await requireUser(request);
+      if (!user) return NextResponse.json({ ok: false, error: 'Unauthorized.' }, { status: 401 });
+      // Match by linked user_id first; fall back to email match (and link it).
+      let { data: rows } = await supabaseAdmin
+        .from('leads').select(CLIENT_FIELDS.join(','))
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+      if ((!rows || rows.length === 0) && user.email) {
+        const { data: byEmail } = await supabaseAdmin
+          .from('leads').select(CLIENT_FIELDS.join(','))
+          .ilike('email', user.email)
+          .order('created_at', { ascending: false });
+        rows = byEmail || [];
+      }
+      return NextResponse.json({ ok: true, leads: rows || [] });
     }
 
     // Client dashboard: seller's private link /my-offer/<token>
@@ -151,7 +178,7 @@ export async function GET(request) {
   }
 }
 
-// PUT — admin updates stage, status, notes, and the client-facing offer fields (requires auth).
+// PUT — admin updates | seller claims their lead after signup.
 const STATUSES = ['New', 'Contacted', 'Working', 'Closed', 'Dead'];
 
 function toNum(v) {
@@ -166,6 +193,25 @@ export async function PUT(request) {
     if (!user) return NextResponse.json({ ok: false, error: 'Unauthorized.' }, { status: 401 });
 
     const body = await request.json();
+
+    // Seller "claim": link this logged-in account to its lead(s) by email.
+    if (body.action === 'claim') {
+      if (!user.email) return NextResponse.json({ ok: false, error: 'No email on account.' }, { status: 400 });
+      const { error } = await supabaseAdmin
+        .from('leads')
+        .update({ user_id: user.id })
+        .ilike('email', user.email)
+        .is('user_id', null);
+      // Also link a specific lead id if provided (covers email-less or mismatched cases).
+      if (body.id && validId(body.id.toString())) {
+        await supabaseAdmin.from('leads').update({ user_id: user.id }).eq('id', body.id.toString());
+      }
+      if (error) return NextResponse.json({ ok: false, error: 'Could not link account.' }, { status: 500 });
+      return NextResponse.json({ ok: true });
+    }
+
+    // From here down: admin-only lead updates.
+    if (!isAdminEmail(user.email)) return NextResponse.json({ ok: false, error: "Unauthorized." }, { status: 401 });
     const id = (body.id || '').toString();
     if (!validId(id)) return NextResponse.json({ ok: false, error: 'Invalid request.' }, { status: 400 });
 

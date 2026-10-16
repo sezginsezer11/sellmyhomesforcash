@@ -62,7 +62,10 @@ export default function Home() {
       <header className="h-header">
         <div className="h-container h-header-in">
           <span className="h-logo">Cash&nbsp;Home&nbsp;Offer</span>
-          <a className="h-phone" href="tel:+18584366585">(858) 436-6585</a>
+          <div className="h-nav-right">
+            <a className="h-signin" href="/login">Sign in</a>
+            <a className="h-phone" href="tel:+18584366585">(858) 436-6585</a>
+          </div>
         </div>
       </header>
 
@@ -359,6 +362,9 @@ export default function Home() {
             <a href="/fix-and-flip-calculator">Fix &amp; Flip Calculator</a>
           </p>
           <p className="smhc-foot-fine">
+            <a href="/login">Seller login</a> &middot; <a href="/my-offer">Track my offer</a> &middot; <a href="/admin">Agent login</a>
+          </p>
+          <p className="smhc-foot-fine">
             Sez Sezer &middot; Keller Williams Realty &middot; DRE#&nbsp;01988197 &middot; San Diego, California &middot; <a href="tel:+18584366585">(858) 436-6585</a>
           </p>
           <p className="smhc-foot-fine">
@@ -382,6 +388,9 @@ export default function Home() {
         .h-logo { font-family: 'Cormorant Garamond',serif; font-weight: 700; font-size: 24px; color: #296190; }
         .h-phone { background: #296190; color: #fff; text-decoration: none; font-weight: 500; padding: 9px 18px; border-radius: 6px; }
         .h-phone:hover { background: #21506f; }
+        .h-nav-right { display: flex; align-items: center; gap: 16px; }
+        .h-signin { color: #296190; text-decoration: none; font-weight: 500; font-size: 15px; }
+        .h-signin:hover { text-decoration: underline; }
         .h-hero { min-height: calc(100vh - 64px); display: flex; align-items: center; background: linear-gradient(180deg,#ffffff 0%,#f5f7f9 100%); }
         .h-hero-inner { text-align: center; padding-top: 40px; padding-bottom: 60px; }
         .h-eyebrow { display: inline-block; text-transform: uppercase; letter-spacing: 2.5px; font-size: 12px; font-weight: 600; color: #296190; margin-bottom: 16px; }
