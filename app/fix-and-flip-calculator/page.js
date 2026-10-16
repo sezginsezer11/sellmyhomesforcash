@@ -20,7 +20,7 @@ function money(n) {
 
 export default function FixFlipCalculator() {
   const [f, setF] = useState(DEF);
-  const up = (e) => setF({ ...f, [e.target.id]: e.target.value });
+  const up = (e) => setF((s) => ({ ...s, [e.target.id]: e.target.value }));
   const reset = () => setF(DEF);
 
   const P = num(f.price), RENO = num(f.reno), ARV = num(f.arv);
@@ -39,14 +39,6 @@ export default function FixFlipCalculator() {
   const equityDp = ARV - P - totalExpNoDp + dp;
   const roi = cashWithDp > 0 ? net / cashWithDp * 100 : 0;
   const neg = net < 0;
-
-  const M = ({ id, cls }) => (
-    <div className="ff-inwrap">
-      {cls === 'money' && <span className="pre">$</span>}
-      <input className={cls} id={id} value={f[id]} onChange={up} inputMode="decimal" />
-      {cls === 'pct' && <span className="suf">%</span>}
-    </div>
-  );
 
   return (
     <div className="ff-page">
@@ -72,34 +64,46 @@ export default function FixFlipCalculator() {
 
             <div className="ff-group">
               <div className="ff-group-label">The Property</div>
-              <div className="ff-field"><label>Purchase Price</label><M id="price" cls="money" /></div>
-              <div className="ff-field"><label>Renovation Cost</label><M id="reno" cls="money" /></div>
-              <div className="ff-field"><label>After Repair Value (ARV)</label><M id="arv" cls="money" /></div>
+              <div className="ff-field"><label htmlFor="price">Purchase Price</label>
+                <div className="ff-inwrap"><span className="pre">$</span><input className="money" id="price" value={f.price} onChange={up} inputMode="decimal" /></div></div>
+              <div className="ff-field"><label htmlFor="reno">Renovation Cost</label>
+                <div className="ff-inwrap"><span className="pre">$</span><input className="money" id="reno" value={f.reno} onChange={up} inputMode="decimal" /></div></div>
+              <div className="ff-field"><label htmlFor="arv">After Repair Value (ARV)</label>
+                <div className="ff-inwrap"><span className="pre">$</span><input className="money" id="arv" value={f.arv} onChange={up} inputMode="decimal" /></div></div>
             </div>
 
             <div className="ff-group">
               <div className="ff-group-label">Financing</div>
               <div className="ff-two">
-                <div className="ff-field"><label>Down Payment</label><M id="dp" cls="pct" /></div>
-                <div className="ff-field"><label>Interest Rate</label><M id="rate" cls="pct" /></div>
+                <div className="ff-field"><label htmlFor="dp">Down Payment</label>
+                  <div className="ff-inwrap"><input className="pct" id="dp" value={f.dp} onChange={up} inputMode="decimal" /><span className="suf">%</span></div></div>
+                <div className="ff-field"><label htmlFor="rate">Interest Rate</label>
+                  <div className="ff-inwrap"><input className="pct" id="rate" value={f.rate} onChange={up} inputMode="decimal" /><span className="suf">%</span></div></div>
               </div>
               <div className="ff-two">
-                <div className="ff-field"><label>Origination Points</label><M id="orig" cls="pct" /></div>
-                <div className="ff-field"><label>Closing Costs</label><M id="close" cls="pct" /></div>
+                <div className="ff-field"><label htmlFor="orig">Origination Points</label>
+                  <div className="ff-inwrap"><input className="pct" id="orig" value={f.orig} onChange={up} inputMode="decimal" /><span className="suf">%</span></div></div>
+                <div className="ff-field"><label htmlFor="close">Closing Costs</label>
+                  <div className="ff-inwrap"><input className="pct" id="close" value={f.close} onChange={up} inputMode="decimal" /><span className="suf">%</span></div></div>
               </div>
             </div>
 
             <div className="ff-group">
               <div className="ff-group-label">Holding &amp; Sale</div>
               <div className="ff-two">
-                <div className="ff-field"><label>Turnaround (months)</label><M id="months" cls="" /></div>
-                <div className="ff-field"><label>Selling Costs</label><M id="sell" cls="pct" /></div>
+                <div className="ff-field"><label htmlFor="months">Turnaround (months)</label>
+                  <div className="ff-inwrap"><input id="months" value={f.months} onChange={up} inputMode="decimal" /></div></div>
+                <div className="ff-field"><label htmlFor="sell">Selling Costs</label>
+                  <div className="ff-inwrap"><input className="pct" id="sell" value={f.sell} onChange={up} inputMode="decimal" /><span className="suf">%</span></div></div>
               </div>
               <div className="ff-two">
-                <div className="ff-field"><label>Buyer&rsquo;s Agent Fee</label><M id="agent" cls="pct" /></div>
-                <div className="ff-field"><label>Property Tax (annual)</label><M id="tax" cls="pct" /></div>
+                <div className="ff-field"><label htmlFor="agent">Buyer&rsquo;s Agent Fee</label>
+                  <div className="ff-inwrap"><input className="pct" id="agent" value={f.agent} onChange={up} inputMode="decimal" /><span className="suf">%</span></div></div>
+                <div className="ff-field"><label htmlFor="tax">Property Tax (annual)</label>
+                  <div className="ff-inwrap"><input className="pct" id="tax" value={f.tax} onChange={up} inputMode="decimal" /><span className="suf">%</span></div></div>
               </div>
-              <div className="ff-field"><label>Insurance (annual)</label><M id="ins" cls="pct" /></div>
+              <div className="ff-field"><label htmlFor="ins">Insurance (annual)</label>
+                <div className="ff-inwrap"><input className="pct" id="ins" value={f.ins} onChange={up} inputMode="decimal" /><span className="suf">%</span></div></div>
             </div>
 
             <button className="ff-reset" type="button" onClick={reset}>Reset to example</button>
