@@ -284,7 +284,7 @@ function CompsMap({ comps, subject, priceOf, ppsfOf }) {
         const price = fmtFull(priceOf(c)); const ppsf = fmtPpsf(ppsfOf(c));
         info.setContent(
           '<div style="font-family:Jost,sans-serif;max-width:240px;color:#26333b">' +
-          '<div style="font-family:\\'Cormorant Garamond\\',serif;font-size:18px;font-weight:600;color:#344a57">' + (c.address || '') + '</div>' +
+          '<div style="font-family:Georgia,serif;font-size:18px;font-weight:600;color:#344a57">' + (c.address || '') + '</div>' +
           (price ? '<div style="font-size:16px;font-weight:600;margin:2px 0 6px">' + price + '</div>' : '') +
           '<div style="font-size:12.5px;color:#4a5a62;margin-bottom:6px">' +
             [c.beds && c.beds + ' bd', c.baths && c.baths + ' ba', c.living_area && fmtNum(c.living_area) + ' sqft', ppsf && ppsf + '/sf', c.status].filter(Boolean).join(' · ') +
