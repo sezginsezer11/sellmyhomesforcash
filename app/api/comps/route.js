@@ -33,6 +33,7 @@ const COMP_FIELDS = [
   'year_built', 'beds', 'baths', 'living_area', 'lot_size_sqft', 'sold_ppsf',
   'close_price', 'close_date', 'orig_list_price', 'price_ppsf', 'days_on_market',
   'redfin_url', 'sort_order', 'photo_url', 'public_remarks', 'current_price',
+  'starred', 'photo_override',
 ];
 
 // GET — address autocomplete | admin report list | admin one report | public report by slug
@@ -153,6 +154,33 @@ export async function POST(request) {
       return NextResponse.json({ ok: true, count: rows.length, comps: comps || [] });
     }
 
+    if (action === 'upload_photo') {
+      const compId = (body.comp_id || '').toString();
+      const dataUrl = (body.data_url || '').toString();
+      if (!compId || !dataUrl.startsWith('data:')) {
+        return NextResponse.json({ ok: false, error: 'comp_id and image required.' }, { status: 400 });
+      }
+      const m = dataUrl.match(/^data:([^;]+);base64,(.*)$/);
+      if (!m) return NextResponse.json({ ok: false, error: 'Invalid image.' }, { status: 400 });
+      const contentType = m[1];
+      const ext = contentType.split('/')[1] || 'jpg';
+      const buffer = Buffer.from(m[2], 'base64');
+      if (buffer.length > 6 * 1024 * 1024) {
+        return NextResponse.json({ ok: false, error: 'Image too large (max 6MB).' }, { status: 400 });
+      }
+      const path = `${compId}-${Date.now()}.${ext}`;
+      const { error: upErr } = await supabaseAdmin.storage
+        .from('comp-photos').upload(path, buffer, { contentType, upsert: true });
+      if (upErr) {
+        console.error('storage upload error:', upErr);
+        return NextResponse.json({ ok: false, error: 'Upload failed: ' + (upErr.message || '') }, { status: 500 });
+      }
+      const { data: pub } = supabaseAdmin.storage.from('comp-photos').getPublicUrl(path);
+      const url = pub?.publicUrl || '';
+      await supabaseAdmin.from('comps').update({ photo_override: url }).eq('id', compId);
+      return NextResponse.json({ ok: true, url });
+    }
+
     return NextResponse.json({ ok: false, error: 'Unknown action.' }, { status: 400 });
   } catch (e) {
     console.error('comps POST error:', e);
@@ -196,7 +224,10 @@ export async function PUT(request) {
 
     const update = {};
     for (const k of COMP_FIELDS) {
-      if (body[k] != null) update[k] = k === 'sort_order' ? (Number(body[k]) || 0) : body[k].toString().slice(0, 1000);
+      if (body[k] == null) continue;
+      if (k === 'sort_order') update[k] = Number(body[k]) || 0;
+      else if (k === 'starred') update[k] = body[k] === true || body[k] === 'true';
+      else update[k] = body[k].toString().slice(0, 2000);
     }
     if (Object.keys(update).length === 0) return NextResponse.json({ ok: false, error: 'Nothing to update.' }, { status: 400 });
     const { error } = await supabaseAdmin.from('comps').update(update).eq('id', compId);
