@@ -5,6 +5,7 @@ import { supabaseBrowser } from '../../lib/supabase-browser';
 
 const STAGES = ['Request', 'Discovery call', 'Property visit', 'Investors compete', 'Choose & close'];
 const STATUSES = ['New', 'Contacted', 'Working', 'Closed', 'Dead'];
+const CLIENT_STATUSES = ['Reviewing', 'Offer Prepared', 'Offer Sent', 'In Escrow', 'Closed'];
 const STATUS_COLOR = {
   New: '#296190', Contacted: '#b26a00', Working: '#1c5b34', Closed: '#555', Dead: '#8a2020',
 };
@@ -25,6 +26,8 @@ export default function AdminPage() {
   const [fFlag, setFFlag] = useState('all');
   const [sort, setSort] = useState('newest');
   const [noteDraft, setNoteDraft] = useState({});
+  const [offerDraft, setOfferDraft] = useState({});
+  const [copied, setCopied] = useState('');
 
   useEffect(() => {
     let done = false;
@@ -67,7 +70,40 @@ export default function AdminPage() {
   };
   const setStage = (id, stage) => { patch(id, { stage }); setLeads(ls => ls.map(l => l.id === id ? { ...l, stage } : l)); };
   const setStatus = (id, status) => { patch(id, { status }); setLeads(ls => ls.map(l => l.id === id ? { ...l, status } : l)); };
+  const setClientStatus = (id, client_status) => { patch(id, { client_status }); setLeads(ls => ls.map(l => l.id === id ? { ...l, client_status } : l)); };
   const saveNote = (id) => { const notes = noteDraft[id] ?? ''; patch(id, { notes }); setLeads(ls => ls.map(l => l.id === id ? { ...l, notes } : l)); };
+
+  const saveOffer = (id) => {
+    const o = offerDraft[id] || {};
+    const body = {
+      offer_amount: o.offer_amount ?? '',
+      offer_details: o.offer_details ?? '',
+      est_closing_costs: o.est_closing_costs ?? '',
+      estimated_net: o.estimated_net ?? '',
+    };
+    patch(id, body);
+    setLeads(ls => ls.map(l => l.id === id ? { ...l, ...body } : l));
+    setCopied('saved-' + id);
+    setTimeout(() => setCopied(''), 1500);
+  };
+
+  const clientLink = (l) => {
+    const base = typeof window !== 'undefined' ? window.location.origin : '';
+    return l.access_token ? base + '/my-offer/' + l.access_token : '';
+  };
+  const copyLink = (l) => {
+    const link = clientLink(l);
+    if (!link) return;
+    navigator.clipboard?.writeText(link);
+    setCopied(l.id);
+    setTimeout(() => setCopied(''), 1500);
+  };
+
+  const od = (id, l) => offerDraft[id] || {
+    offer_amount: l.offer_amount ?? '', offer_details: l.offer_details ?? '',
+    est_closing_costs: l.est_closing_costs ?? '', estimated_net: l.estimated_net ?? '',
+  };
+  const setOD = (id, l, key, val) => setOfferDraft(d => ({ ...d, [id]: { ...od(id, l), [key]: val } }));
 
   const view = useMemo(() => {
     let r = leads.slice();
@@ -84,9 +120,9 @@ export default function AdminPage() {
   }, [leads, q, fStage, fStatus, fFlag, sort]);
 
   const exportCSV = () => {
-    const cols = ['created_at','name','phone','email','address','status','stage','timeline','condition',
+    const cols = ['created_at','name','phone','email','address','status','client_status','stage','timeline','condition',
       'property_type','beds','baths','sqft','year_built','occupancy','reason_selling','heard_about',
-      'callback_requested','details_completed','notes'];
+      'offer_amount','est_closing_costs','estimated_net','callback_requested','details_completed','notes'];
     const esc = (v) => '"' + (v == null ? '' : String(v).replace(/"/g, '""')) + '"';
     const rows = [cols.join(',')].concat(view.map(l => cols.map(c => esc(l[c])).join(',')));
     const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
@@ -117,7 +153,11 @@ export default function AdminPage() {
     <div className="a-wrap">
       <div className="a-head">
         <h1>Leads <span className="a-count">{view.length}</span></h1>
-        <div><span className="a-me">{session.user.email}</span><button className="a-logout" onClick={logout}>Sign out</button></div>
+        <div className="a-head-right">
+          <a className="a-tool" href="/fix-and-flip-calculator" target="_blank" rel="noopener">Fix &amp; Flip Calculator ↗</a>
+          <span className="a-me">{session.user.email}</span>
+          <button className="a-logout" onClick={logout}>Sign out</button>
+        </div>
       </div>
 
       <div className="a-controls">
@@ -148,6 +188,7 @@ export default function AdminPage() {
           {view.length === 0 && <p className="a-empty">No leads match.</p>}
           {view.map(l => {
             const status = l.status || 'New';
+            const o = od(l.id, l);
             return (
             <div className="a-lead" key={l.id}>
               <div className="a-lead-top">
@@ -186,8 +227,47 @@ export default function AdminPage() {
                 </div>
               )}
 
+              {/* Client dashboard: offer + what the seller sees */}
+              <div className="a-client">
+                <div className="a-client-head">
+                  <span className="a-client-title">Client dashboard</span>
+                  <div className="a-client-link">
+                    <select className="a-cstatus" value={l.client_status || 'Reviewing'} onChange={e=>setClientStatus(l.id, e.target.value)}>
+                      {CLIENT_STATUSES.map(s=><option key={s}>{s}</option>)}
+                    </select>
+                    <button className="a-copy" onClick={()=>copyLink(l)} disabled={!l.access_token}>
+                      {copied === l.id ? 'Copied ✓' : 'Copy client link'}
+                    </button>
+                  </div>
+                </div>
+                <div className="a-offer-grid">
+                  <label>Offer amount
+                    <input inputMode="numeric" placeholder="e.g. 510000" value={o.offer_amount}
+                      onChange={e=>setOD(l.id, l, 'offer_amount', e.target.value)} />
+                  </label>
+                  <label>Est. closing costs
+                    <input inputMode="numeric" placeholder="e.g. 12000" value={o.est_closing_costs}
+                      onChange={e=>setOD(l.id, l, 'est_closing_costs', e.target.value)} />
+                  </label>
+                  <label>Estimated net to seller
+                    <input inputMode="numeric" placeholder="e.g. 498000" value={o.estimated_net}
+                      onChange={e=>setOD(l.id, l, 'estimated_net', e.target.value)} />
+                  </label>
+                </div>
+                <label className="a-offer-details">Offer details (shown to seller)
+                  <textarea rows={2} placeholder="e.g. All-cash, 14-day close, no repairs needed, buyer covers all costs."
+                    value={o.offer_details} onChange={e=>setOD(l.id, l, 'offer_details', e.target.value)} />
+                </label>
+                <div className="a-offer-actions">
+                  <button className="a-save-offer" onClick={()=>saveOffer(l.id)}>
+                    {copied === 'saved-' + l.id ? 'Saved ✓' : 'Save offer'}
+                  </button>
+                  {l.access_token && <a className="a-preview" href={'/my-offer/' + l.access_token} target="_blank" rel="noopener">Preview seller view ↗</a>}
+                </div>
+              </div>
+
               <div className="a-notes">
-                <textarea placeholder="Notes… (call recap, offer details, next steps)"
+                <textarea placeholder="Internal notes… (call recap, next steps — not shown to seller)"
                   value={noteDraft[l.id] ?? l.notes ?? ''}
                   onChange={e=>setNoteDraft(d=>({...d,[l.id]:e.target.value}))} rows={2} />
                 <button onClick={()=>saveNote(l.id)}>Save note</button>
@@ -209,10 +289,13 @@ const css = `
   .a-login input { width: 100%; padding: 11px 12px; margin-bottom: 12px; border: 1px solid #d5dbdf; border-radius: 6px; font-size: 15px; box-sizing: border-box; }
   .a-login button { width: 100%; padding: 12px; background: #296190; color: #fff; border: 0; border-radius: 6px; font-size: 16px; font-weight: 600; cursor: pointer; }
   .a-err { color: #8a2020; font-size: 14px; margin: 10px 0 0; }
-  .a-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .a-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 12px; flex-wrap: wrap; }
   .a-head h1 { font-family: 'Cormorant Garamond',serif; font-size: 30px; margin: 0; }
+  .a-head-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .a-tool { font-size: 13px; color: #296190; text-decoration: none; border: 1px solid #296190; padding: 7px 13px; border-radius: 6px; font-weight: 600; }
+  .a-tool:hover { background: #296190; color: #fff; }
   .a-count { font-family: 'Jost',sans-serif; font-size: 14px; background: #eef1f3; color: #4a5a62; padding: 2px 10px; border-radius: 12px; vertical-align: middle; margin-left: 6px; }
-  .a-me { font-size: 13px; color: #6a7a82; margin-right: 12px; }
+  .a-me { font-size: 13px; color: #6a7a82; }
   .a-logout { background: none; border: 1px solid #d5dbdf; border-radius: 6px; padding: 8px 14px; cursor: pointer; font-family: 'Jost',sans-serif; }
   .a-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
   .a-controls input, .a-controls select { padding: 9px 11px; border: 1px solid #d5dbdf; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 14px; background: #fff; }
@@ -235,8 +318,26 @@ const css = `
   .a-detail { display: flex; flex-wrap: wrap; gap: 8px; font-size: 12.5px; color: #4a5a62; padding: 10px 0; border-top: 1px solid #eef1f3; }
   .a-detail span { background: #f5f7f9; padding: 3px 9px; border-radius: 12px; }
   .a-flag { background: #fbeaea !important; color: #8a2020; font-weight: 600; }
-  .a-notes { display: flex; gap: 8px; margin-top: 10px; }
+  .a-client { border: 1px solid #d9e6dd; background: #f3f9f5; border-radius: 10px; padding: 14px; margin-top: 12px; }
+  .a-client-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .a-client-title { font-size: 13px; font-weight: 600; color: #1c5b34; letter-spacing: .04em; text-transform: uppercase; }
+  .a-client-link { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .a-cstatus { padding: 6px 9px; border: 1px solid #bcdcc8; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13px; background: #fff; }
+  .a-copy { padding: 6px 12px; background: #1c5b34; color: #fff; border: 0; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+  .a-copy:disabled { background: #a8bcae; cursor: not-allowed; }
+  .a-offer-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .a-client label { display: flex; flex-direction: column; font-size: 12px; color: #4a5a62; gap: 4px; font-weight: 600; }
+  .a-client input, .a-client textarea { padding: 8px 10px; border: 1px solid #cfe0d5; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 14px; background: #fff; font-weight: 400; box-sizing: border-box; width: 100%; }
+  .a-offer-details { margin-top: 10px; }
+  .a-client textarea { resize: vertical; }
+  .a-offer-actions { display: flex; gap: 12px; align-items: center; margin-top: 12px; }
+  .a-save-offer { padding: 9px 18px; background: #296190; color: #fff; border: 0; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13.5px; font-weight: 600; cursor: pointer; }
+  .a-save-offer:hover { background: #21506f; }
+  .a-preview { font-size: 13px; color: #296190; text-decoration: none; font-weight: 600; }
+  .a-preview:hover { text-decoration: underline; }
+  .a-notes { display: flex; gap: 8px; margin-top: 12px; }
   .a-notes textarea { flex: 1; padding: 9px 11px; border: 1px solid #d5dbdf; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13.5px; resize: vertical; box-sizing: border-box; }
   .a-notes button { padding: 8px 14px; background: none; border: 1px solid #296190; color: #296190; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13px; font-weight: 600; cursor: pointer; align-self: flex-start; white-space: nowrap; }
   .a-notes button:hover { background: #296190; color: #fff; }
+  @media (max-width: 640px) { .a-offer-grid { grid-template-columns: 1fr; } }
 `;

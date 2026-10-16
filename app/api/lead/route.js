@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../lib/supabase';
+import crypto from 'crypto';
 
 const DETAIL_FIELDS = [
   'property_type', 'beds', 'baths', 'sqft', 'year_built',
@@ -12,7 +13,20 @@ const SENSITIVE = ['mortgage_status', 'foreclosure', 'liens_taxes'];
 // Public prefill/read: non-sensitive detail fields + stage (for the tracker).
 const PREFILL_FIELDS = DETAIL_FIELDS.filter((f) => !SENSITIVE.includes(f)).concat(['stage']);
 
+// Fields the seller sees on their private /my-offer dashboard (keyed by secret token).
+const CLIENT_FIELDS = [
+  'name', 'address', 'property_type', 'beds', 'baths', 'sqft', 'year_built',
+  'stage', 'client_status', 'offer_amount', 'offer_details',
+  'est_closing_costs', 'estimated_net', 'created_at',
+];
+
+const CLIENT_STATUSES = ['Reviewing', 'Offer Prepared', 'Offer Sent', 'In Escrow', 'Closed'];
+
 function validId(id) { return /^[0-9a-f-]{20,40}$/i.test(id || ''); }
+function validToken(t) { return /^[0-9a-f]{32,80}$/i.test(t || ''); }
+function newToken() {
+  return crypto.randomBytes(24).toString('hex'); // 48-char secret link
+}
 
 // Verify the caller is a logged-in Supabase user (admin). Returns user or null.
 async function requireUser(request) {
@@ -44,6 +58,8 @@ export async function POST(request) {
     const insert = {
       name, phone, email, address, timeline, condition, heard_about,
       source: 'landing', stage: 1,
+      client_status: 'Reviewing',
+      access_token: newToken(),
       user_agent: request.headers.get('user-agent') || '',
     };
     // Property facts pulled from Redfin on page 1 (all optional).
@@ -55,12 +71,12 @@ export async function POST(request) {
     const { data, error } = await supabaseAdmin
       .from('leads')
       .insert(insert)
-      .select('id').single();
+      .select('id, access_token').single();
     if (error) {
       console.error('insert error:', error);
       return NextResponse.json({ ok: false, error: 'Could not save. Please try again.' }, { status: 500 });
     }
-    return NextResponse.json({ ok: true, id: data.id });
+    return NextResponse.json({ ok: true, id: data.id, token: data.access_token });
   } catch (e) {
     console.error('POST error:', e);
     return NextResponse.json({ ok: false, error: 'Something went wrong.' }, { status: 500 });
@@ -95,7 +111,7 @@ export async function PATCH(request) {
   }
 }
 
-// GET — public prefill by id (non-sensitive + stage), OR admin list (with token).
+// GET — admin list (token) | client dashboard by secret token | public prefill by id.
 export async function GET(request) {
   try {
     const url = new URL(request.url);
@@ -113,6 +129,16 @@ export async function GET(request) {
       return NextResponse.json({ ok: true, leads: data });
     }
 
+    // Client dashboard: seller's private link /my-offer/<token>
+    const clientToken = url.searchParams.get('token') || '';
+    if (clientToken) {
+      if (!validToken(clientToken)) return NextResponse.json({ ok: false, error: 'Invalid link.' }, { status: 400 });
+      const { data, error } = await supabaseAdmin
+        .from('leads').select(CLIENT_FIELDS.join(',')).eq('access_token', clientToken).single();
+      if (error || !data) return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 });
+      return NextResponse.json({ ok: true, data });
+    }
+
     const id = url.searchParams.get('id') || '';
     if (!validId(id)) return NextResponse.json({ ok: false, error: 'Invalid request.' }, { status: 400 });
     const { data, error } = await supabaseAdmin
@@ -125,8 +151,14 @@ export async function GET(request) {
   }
 }
 
-// PUT — admin advances a lead's stage (requires auth token).
+// PUT — admin updates stage, status, notes, and the client-facing offer fields (requires auth).
 const STATUSES = ['New', 'Contacted', 'Working', 'Closed', 'Dead'];
+
+function toNum(v) {
+  if (v == null || v === '') return null;
+  const n = Number(String(v).replace(/[^0-9.\-]/g, ''));
+  return Number.isFinite(n) ? n : null;
+}
 
 export async function PUT(request) {
   try {
@@ -148,9 +180,17 @@ export async function PUT(request) {
       if (!STATUSES.includes(st)) return NextResponse.json({ ok: false, error: 'Invalid status.' }, { status: 400 });
       update.status = st;
     }
-    if (body.notes != null) {
-      update.notes = body.notes.toString().slice(0, 4000);
+    if (body.client_status != null) {
+      const cs = body.client_status.toString();
+      if (!CLIENT_STATUSES.includes(cs)) return NextResponse.json({ ok: false, error: 'Invalid client status.' }, { status: 400 });
+      update.client_status = cs;
     }
+    if (body.notes != null) update.notes = body.notes.toString().slice(0, 4000);
+    if (body.offer_details != null) update.offer_details = body.offer_details.toString().slice(0, 2000);
+    if (body.offer_amount != null) update.offer_amount = toNum(body.offer_amount);
+    if (body.est_closing_costs != null) update.est_closing_costs = toNum(body.est_closing_costs);
+    if (body.estimated_net != null) update.estimated_net = toNum(body.estimated_net);
+
     if (Object.keys(update).length === 0) {
       return NextResponse.json({ ok: false, error: 'Nothing to update.' }, { status: 400 });
     }
