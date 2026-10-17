@@ -89,13 +89,32 @@ export default function PublicComps() {
   const toggleSort = (key) => setSort((s2) => s2.key === key ? { key, dir: -s2.dir } : { key, dir: 1 });
   const arrow = (key) => sort.key === key ? (sort.dir === 1 ? ' \u25b4' : ' \u25be') : '';
 
+  const norm = (a) => (a || '').toString().trim().toLowerCase().replace(/,.*$/, '');
+  const subjectComp = useMemo(() => {
+    const target = norm(report?.subject_address);
+    return comps.find((c) => norm(c.address) === target) || null;
+  }, [comps, report]);
+
   const grouped = useMemo(() => {
     const out = [];
-    for (const g of GROUPS) { const rows = comps.filter((c) => groupOf(c.status) === g.key); if (rows.length) out.push({ ...g, rows }); }
-    const others = comps.filter((c) => groupOf(c.status) === 'other');
-    if (others.length) out.push({ key: 'other', label: 'Other', badge: '•', color: '#8a9aa2', rows: others });
+    const withSubjectFirst = (rows, key) => {
+      if (!subjectComp) return rows;
+      const subjKey = groupOf(subjectComp.status);
+      // Remove the subject if it naturally falls in this group, then pin it first.
+      const rest = rows.filter((c) => c.id !== subjectComp.id);
+      return [subjectComp, ...rest];
+    };
+    for (const g of GROUPS) {
+      let rows = comps.filter((c) => groupOf(c.status) === g.key && (!subjectComp || c.id !== subjectComp.id));
+      if (rows.length || (subjectComp && comps.some((c) => groupOf(c.status) === g.key))) {
+        rows = subjectComp ? [subjectComp, ...rows] : rows;
+        out.push({ ...g, rows });
+      }
+    }
+    const others = comps.filter((c) => groupOf(c.status) === 'other' && (!subjectComp || c.id !== subjectComp.id));
+    if (others.length) out.push({ key: 'other', label: 'Other', badge: '\u2022', color: '#8a9aa2', rows: subjectComp ? [subjectComp, ...others] : others });
     return out;
-  }, [comps]);
+  }, [comps, subjectComp]);
 
   const statsFor = (rows) => {
     const prices = rows.map(priceOf).map(toNum).filter(Boolean);
@@ -119,13 +138,15 @@ export default function PublicComps() {
   const showMap = report.show_map !== false && MAPS_KEY;
   const mapComps = comps.filter((c) => c.lat && c.lng);
 
-  const Card = (c) => {
-    const open = !!expanded[c.id];
+  const Card = (c, isSubject) => {
+    const open = !!expanded[c.id + (isSubject ? '-subj' : '')];
+    const ekey = c.id + (isSubject ? '-subj' : '');
     return (
-      <article className={'cp-card' + (c.starred ? ' cp-star' : '')} key={c.id}>
+      <article className={'cp-card' + (c.starred ? ' cp-star' : '') + (isSubject ? ' cp-subj' : '')} key={ekey}>
         <div className="cp-cardimg" style={(c.photo_override || c.photo_url) ? { backgroundImage: `url(${c.photo_override || c.photo_url})` } : {}}>
           {!(c.photo_override || c.photo_url) && <span className="cp-cardaddr-ph">{c.address}</span>}
-          {c.starred && <span className="cp-starbadge">★ Top comp</span>}
+          {isSubject && <span className="cp-subjbadge">Subject Property</span>}
+          {!isSubject && c.starred && <span className="cp-starbadge">★ Top comp</span>}
           {c.status && <span className={'cp-badge ' + statusClass(c.status)}>{c.status}</span>}
         </div>
         <div className="cp-cardbody">
@@ -155,7 +176,7 @@ export default function PublicComps() {
               {c.public_remarks && <p className="cp-remarks">{c.public_remarks}</p>}
             </div>
           )}
-          <button className="cp-toggle" onClick={() => setExpanded((e) => ({ ...e, [c.id]: !e[c.id] }))}>{open ? 'Show less ▴' : 'View details ▾'}</button>
+          <button className="cp-toggle" onClick={() => setExpanded((e) => ({ ...e, [ekey]: !e[ekey] }))}>{open ? 'Show less \u25b4' : 'View details \u25be'}</button>
         </div>
       </article>
     );
@@ -193,7 +214,7 @@ export default function PublicComps() {
       {visibleGroups.map((g) => (
         <section className="cp-group" key={g.key}>
           <div className="cp-grouphead"><h2>{g.label}</h2></div>
-          <div className="cp-cards">{g.rows.map((c) => Card(c))}</div>
+          <div className="cp-cards">{g.rows.map((c, i) => Card(c, subjectComp && c.id === subjectComp.id))}</div>
         </section>
       ))}
 
@@ -346,10 +367,16 @@ function CompsMap({ comps, subject, priceOf, ppsfOf }) {
           const pos = { lat: Number(c.lat), lng: Number(c.lng) };
           bounds.extend(pos);
           const sold = groupOf(c.status) === 'sold';
+          const shortAddr = (c.address || '').split(',')[0];
+          const priceShort = fmtFull(priceOf(c));
           const marker = new Marker({
             position: pos, map, title: c.address,
-            label: c.starred ? { text: '\u2605', color: '#fff', fontSize: '13px' } : undefined,
-            icon: { path: g.SymbolPath.CIRCLE, scale: c.starred ? 11 : 8, fillColor: c.starred ? GOLD : (sold ? LAKE : '#2f7d4f'), fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 },
+            label: {
+              text: shortAddr + (priceShort ? '  ' + priceShort : ''),
+              color: '#26333b', fontSize: '12px', fontWeight: '600',
+              className: 'cp-pinlabel',
+            },
+            icon: { path: g.SymbolPath.CIRCLE, scale: c.starred ? 11 : 8, fillColor: c.starred ? GOLD : (sold ? LAKE : '#2f7d4f'), fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2, labelOrigin: new g.Point(0, 3.2) },
           });
           marker.addListener('click', () => {
             const price = fmtFull(priceOf(c)); const ppsf = fmtPpsf(ppsfOf(c));
@@ -448,7 +475,7 @@ const css = `
   .cp-group { margin-top: 30px; }
   .cp-grouphead { border-bottom: 2px solid ${GOLD}; padding-bottom: 10px; margin-bottom: 20px; }
   .cp-grouphead h2 { font-family: 'Cormorant Garamond',serif; font-size: 28px; font-weight: 500; margin: 0; color: ${LAKE}; }
-  .cp-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
+  .cp-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
   .cp-card { background: #fff; border: 1px solid #eee9e1; border-radius: 11px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 10px 30px rgba(52,74,87,.07); }
   .cp-card.cp-star { border: 2px solid ${GOLD}; }
   .cp-cardimg { position: relative; aspect-ratio: 16/10; background-size: cover; background-position: center; background-color: ${LAKE}; display: flex; align-items: center; justify-content: center; }
@@ -456,6 +483,8 @@ const css = `
   .cp-badge { position: absolute; top: 11px; left: 11px; font-size: 10px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; padding: 4px 10px; border-radius: 4px; background: rgba(255,255,255,.95); color: ${LAKE}; }
   .cp-badge.st-closed { background: ${LAKE}; color: #fff; } .cp-badge.st-active { background: #2f7d4f; color: #fff; } .cp-badge.st-pending { background: ${GOLD}; color: #fff; }
   .cp-starbadge { position: absolute; top: 11px; right: 11px; font-size: 10px; font-weight: 600; padding: 4px 10px; border-radius: 4px; background: ${GOLD}; color: #fff; }
+  .cp-subjbadge { position: absolute; top: 11px; right: 11px; font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; padding: 4px 10px; border-radius: 4px; background: #26333b; color: #fff; }
+  .cp-card.cp-subj { border: 2px solid #26333b; box-shadow: 0 12px 34px rgba(38,51,59,.16); }
   .cp-cardbody { padding: 18px 20px 20px; display: flex; flex-direction: column; flex: 1; }
   .cp-cardbody h3 { font-family: 'Cormorant Garamond',serif; font-size: 21px; font-weight: 600; margin: 0 0 2px; color: ${LAKE}; line-height: 1.15; }
   .cp-rows { margin-top: 12px; display: flex; flex-direction: column; }
@@ -497,7 +526,8 @@ const css = `
   .cp-btn-ghost { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.6); }
   .cp-footer { text-align: center; font-size: 13px; color: #7a8891; padding: 34px 0 0; line-height: 1.8; }
   .cp-footer strong { color: ${LAKE}; } .cp-disc { font-size: 11.5px; color: #a8b0b6; }
-  @media (max-width: 920px) { .cp-cards { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 1100px) { .cp-cards { grid-template-columns: repeat(3, 1fr); } }
+  @media (max-width: 820px) { .cp-cards { grid-template-columns: repeat(2, 1fr); } }
   @media (max-width: 720px) { .cp-statrow { grid-template-columns: 1fr; gap: 18px; } .cp-statmetric { text-align: left; display: flex; justify-content: space-between; align-items: baseline; } }
   @media (max-width: 640px) { .cp-hero h1 { font-size: 32px; } .cp-cards { grid-template-columns: 1fr; } .cp-map { height: 340px; } }
 `;
