@@ -333,7 +333,13 @@ function CompsMap({ comps, subject, priceOf, ppsfOf }) {
         const { Marker } = await window.google.maps.importLibrary('marker');
         if (cancelled || !ref.current) return;
         const g = window.google.maps;
-        const map = new Map(ref.current, { mapTypeControl: false, streetViewControl: false, fullscreenControl: false, styles: MAP_STYLE });
+        const map = new Map(ref.current, {
+          mapTypeId: 'hybrid',               // satellite + street labels ("mixed")
+          mapTypeControl: true,              // let viewers switch Map / Satellite / Hybrid
+          mapTypeControlOptions: { style: g.MapTypeControlStyle.HORIZONTAL_BAR, mapTypeIds: ['roadmap', 'hybrid', 'satellite'] },
+          streetViewControl: false,
+          fullscreenControl: true,
+        });
         const bounds = new g.LatLngBounds();
         const info = new InfoWindow();
         pts.forEach((c) => {
