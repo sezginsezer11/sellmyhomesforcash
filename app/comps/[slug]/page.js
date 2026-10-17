@@ -89,10 +89,26 @@ export default function PublicComps() {
   const toggleSort = (key) => setSort((s2) => s2.key === key ? { key, dir: -s2.dir } : { key, dir: 1 });
   const arrow = (key) => sort.key === key ? (sort.dir === 1 ? ' \u25b4' : ' \u25be') : '';
 
-  const norm = (a) => (a || '').toString().trim().toLowerCase().replace(/,.*$/, '');
+  // Normalize an address for matching: lowercase, drop everything after the first
+  // comma, strip punctuation, and canonicalize common street suffixes so e.g.
+  // "12343 Calderon Rd" matches "12343 Calderon Road".
+  const SUFFIX = { rd:'road', dr:'drive', st:'street', ave:'avenue', av:'avenue', blvd:'boulevard', ln:'lane', ct:'court', pl:'place', ter:'terrace', cir:'circle', way:'way', trl:'trail', row:'row', pkwy:'parkway', hwy:'highway' };
+  const norm = (a) => {
+    let x = (a || '').toString().toLowerCase().replace(/,.*$/, '').replace(/[.#]/g, ' ');
+    const words = x.split(/\s+/).filter(Boolean).map((w) => SUFFIX[w] || w);
+    return words.join(' ').trim();
+  };
+  // Looser key: street number + first street word only (handles suffix/unit differences).
+  const stub = (a) => {
+    const w = norm(a).split(' ');
+    return (w[0] || '') + ' ' + (w[1] || '');
+  };
   const subjectComp = useMemo(() => {
     const target = norm(report?.subject_address);
-    return comps.find((c) => norm(c.address) === target) || null;
+    if (!target) return null;
+    let hit = comps.find((c) => norm(c.address) === target);
+    if (!hit) { const t2 = stub(report?.subject_address); hit = comps.find((c) => stub(c.address) === t2); }
+    return hit || null;
   }, [comps, report]);
 
   const grouped = useMemo(() => {
