@@ -142,14 +142,37 @@ export async function POST(request) {
         return NextResponse.json({ ok: false, error: e.message || 'Could not read the sheet.' }, { status: 400 });
       }
       const rows = parsed.comps || [];
-      // Geocode each address (cached) so the map can place pins.
+
+      // Preserve manual edits across a re-import: uploaded photos, stars, and any
+      // manual photo. Key existing comps by address + MLS# so they re-attach.
+      const { data: existing } = await supabaseAdmin
+        .from('comps').select('*').eq('report_id', reportId);
+      const keyOf = (c) => ((c.address || '').trim().toLowerCase() + '|' + (c.mls_number || '').trim().toLowerCase());
+      const keep = {};
+      for (const c of (existing || [])) {
+        keep[keyOf(c)] = {
+          photo_override: c.photo_override || null,
+          starred: c.starred || false,
+          lat: c.lat, lng: c.lng,
+        };
+      }
+
+      // Geocode each address (cached); reuse stored coords when present.
       for (const r of rows) {
-        if (r.address) {
+        const prior = keep[keyOf(r)];
+        if (prior && prior.lat != null && prior.lng != null) { r.lat = prior.lat; r.lng = prior.lng; }
+        else if (r.address) {
           const geo = await geocodeAddress(r.address, r.postal_code);
           if (geo) { r.lat = geo.lat; r.lng = geo.lng; }
         }
+        // Re-apply preserved photo + star.
+        if (prior) {
+          if (prior.photo_override) r.photo_override = prior.photo_override;
+          if (prior.starred) r.starred = true;
+        }
       }
-      // Replace this report's comps with the sheet rows.
+
+      // Replace this report's comps with the sheet rows (now carrying preserved fields).
       await supabaseAdmin.from('comps').delete().eq('report_id', reportId);
       if (rows.length) {
         const toInsert = rows.map((r, i) => ({ report_id: reportId, sort_order: i, ...r }));
