@@ -286,30 +286,61 @@ export default function PublicComps() {
 // ---- Google Map with pins + popups ----
 function CompsMap({ comps, subject, priceOf, ppsfOf }) {
   const ref = useRef(null);
-  const [status, setStatus] = useState('loading'); // loading | ok | nokey | noauth | nocoords
+  const [status, setStatus] = useState('loading'); // loading | ok | nocoords | noauth
 
   const pts = comps.filter((c) => c.lat && c.lng);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    if (!MAPS_KEY) { setStatus('nokey'); return; }
+    if (!MAPS_KEY) { setStatus('nocoords'); return; }
     if (!pts.length) { setStatus('nocoords'); return; }
 
-    // Catch Google's auth failure (invalid key / billing off) — it calls this global.
-    window.gm_authFailure = () => setStatus('noauth');
+    let cancelled = false;
+    window.gm_authFailure = () => { if (!cancelled) setStatus('noauth'); };
 
-    const init = () => {
-      if (!window.google || !window.google.maps || !ref.current) return;
+    // Load the Google Maps JS API once, using the official async bootstrap so
+    // google.maps.importLibrary is available, then import the maps + marker libs.
+    const ensureLoader = () => new Promise((resolve, reject) => {
+      if (window.google && window.google.maps && window.google.maps.importLibrary) { resolve(); return; }
+      const existing = document.getElementById('gmaps-js');
+      if (existing) { existing.addEventListener('load', () => resolve()); existing.addEventListener('error', reject); return; }
+      // Official inline bootstrap loader (defines google.maps.importLibrary).
+      (function (g) {
+        var h, a, k, p = 'The Google Maps JavaScript API', c = 'google', l = 'importLibrary', q = '__ib__', m = document, b = window;
+        b = b[c] || (b[c] = {});
+        var d = b.maps || (b.maps = {}), r = new Set(), e = new URLSearchParams(), u = function () {
+          return h || (h = new Promise(function (f, n) {
+            a = m.createElement('script'); a.id = 'gmaps-js';
+            e.set('libraries', [...r] + '');
+            e.set('key', MAPS_KEY);
+            a.src = 'https://maps.' + c + 'apis.com/maps/api/js?' + e;
+            a.onerror = function () { n(Error(p + ' could not load.')); };
+            a.onload = function () { f(); };
+            m.head.append(a);
+          }));
+        };
+        d[l] ? 0 : d[l] = function (f) { for (var _ = arguments.length, n = new Array(_ > 1 ? _ - 1 : 0), x = 1; x < _; x++) n[x - 1] = arguments[x]; return r.add(f) && u().then(function () { return d[l].apply(d, [f, ...n]); }); };
+      })({});
+      // after bootstrap, resolve once importLibrary exists
+      const check = setInterval(() => { if (window.google && window.google.maps && window.google.maps.importLibrary) { clearInterval(check); resolve(); } }, 50);
+      setTimeout(() => { clearInterval(check); if (!(window.google && window.google.maps && window.google.maps.importLibrary)) reject(Error('timeout')); }, 8000);
+    });
+
+    (async () => {
       try {
+        await ensureLoader();
+        const { Map, InfoWindow } = await window.google.maps.importLibrary('maps');
+        const { Marker } = await window.google.maps.importLibrary('marker');
+        if (cancelled || !ref.current) return;
         const g = window.google.maps;
-        const map = new g.Map(ref.current, { mapTypeControl: false, streetViewControl: false, fullscreenControl: false, styles: MAP_STYLE });
+        const map = new Map(ref.current, { mapTypeControl: false, streetViewControl: false, fullscreenControl: false, styles: MAP_STYLE });
         const bounds = new g.LatLngBounds();
-        const info = new g.InfoWindow();
+        const info = new InfoWindow();
         pts.forEach((c) => {
           const pos = { lat: Number(c.lat), lng: Number(c.lng) };
           bounds.extend(pos);
           const sold = groupOf(c.status) === 'sold';
-          const marker = new g.Marker({
+          const marker = new Marker({
             position: pos, map, title: c.address,
             label: c.starred ? { text: '\u2605', color: '#fff', fontSize: '13px' } : undefined,
             icon: { path: g.SymbolPath.CIRCLE, scale: c.starred ? 11 : 8, fillColor: c.starred ? GOLD : (sold ? LAKE : '#2f7d4f'), fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 },
@@ -331,24 +362,15 @@ function CompsMap({ comps, subject, priceOf, ppsfOf }) {
         });
         map.fitBounds(bounds, 60);
         g.event.addListenerOnce(map, 'idle', () => { if (pts.length === 1) map.setZoom(15); });
-        setStatus('ok');
-      } catch (e) { console.error('map init error', e); setStatus('noauth'); }
-    };
+        if (!cancelled) setStatus('ok');
+      } catch (e) {
+        console.error('map load error', e);
+        if (!cancelled) setStatus('noauth');
+      }
+    })();
 
-    if (window.google && window.google.maps) { init(); return; }
-    let s = document.getElementById('gmaps-js');
-    if (s) { s.addEventListener('load', init); return; }
-    s = document.createElement('script');
-    s.id = 'gmaps-js';
-    s.src = 'https://maps.googleapis.com/maps/api/js?key=' + MAPS_KEY + '&loading=async';
-    s.async = true;
-    s.onload = init;
-    s.onerror = () => setStatus('noauth');
-    document.head.appendChild(s);
+    return () => { cancelled = true; };
   }, [comps]);
-
-  // Don't render the section at all if there's simply no key and no coords to show.
-  if (status === 'nokey') return null;
 
   return (
     <section className="cp-mapsec">
@@ -360,7 +382,7 @@ function CompsMap({ comps, subject, priceOf, ppsfOf }) {
       </div>
       <div ref={ref} className="cp-map" style={{ display: status === 'ok' || status === 'loading' ? 'block' : 'none' }} />
       {status === 'nocoords' && <div className="cp-mapmsg">Map locations are being prepared. Re-import the sheet in admin to plot these addresses.</div>}
-      {status === 'noauth' && <div className="cp-mapmsg">The map could not load. The Google Maps key needs Maps JavaScript API enabled and billing turned on.</div>}
+      {status === 'noauth' && <div className="cp-mapmsg">The map could not load. Check that the Google Maps JavaScript API is enabled and billing is on.</div>}
     </section>
   );
 }
