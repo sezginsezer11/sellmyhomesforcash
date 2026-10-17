@@ -104,30 +104,29 @@ export default function PublicComps() {
     return (w[0] || '') + ' ' + (w[1] || '');
   };
   const subjectComp = useMemo(() => {
-    const target = norm(report?.subject_address);
-    if (!target) return null;
-    let hit = comps.find((c) => norm(c.address) === target);
-    if (!hit) { const t2 = stub(report?.subject_address); hit = comps.find((c) => stub(c.address) === t2); }
+    // Primary: a row explicitly marked status "Subject" in the sheet.
+    let hit = comps.find((c) => (c.status || '').trim().toLowerCase() === 'subject');
+    // Fallback: match the report's subject_address (exact, then street number+name).
+    if (!hit) {
+      const target = norm(report?.subject_address);
+      if (target && target !== 'test') {
+        hit = comps.find((c) => norm(c.address) === target);
+        if (!hit) { const t2 = stub(report?.subject_address); hit = comps.find((c) => stub(c.address) === t2); }
+      }
+    }
     return hit || null;
   }, [comps, report]);
 
   const grouped = useMemo(() => {
     const out = [];
-    const withSubjectFirst = (rows, key) => {
-      if (!subjectComp) return rows;
-      const subjKey = groupOf(subjectComp.status);
-      // Remove the subject if it naturally falls in this group, then pin it first.
-      const rest = rows.filter((c) => c.id !== subjectComp.id);
-      return [subjectComp, ...rest];
-    };
+    const isSubj = (c) => subjectComp && c.id === subjectComp.id;
     for (const g of GROUPS) {
-      let rows = comps.filter((c) => groupOf(c.status) === g.key && (!subjectComp || c.id !== subjectComp.id));
-      if (rows.length || (subjectComp && comps.some((c) => groupOf(c.status) === g.key))) {
-        rows = subjectComp ? [subjectComp, ...rows] : rows;
-        out.push({ ...g, rows });
-      }
+      const rows = comps.filter((c) => groupOf(c.status) === g.key && !isSubj(c));
+      if (!rows.length) continue;
+      out.push({ ...g, rows: subjectComp ? [subjectComp, ...rows] : rows });
     }
-    const others = comps.filter((c) => groupOf(c.status) === 'other' && (!subjectComp || c.id !== subjectComp.id));
+    // "Other" = anything not in a known group AND not the subject row.
+    const others = comps.filter((c) => groupOf(c.status) === 'other' && !isSubj(c));
     if (others.length) out.push({ key: 'other', label: 'Other', badge: '\u2022', color: '#8a9aa2', rows: subjectComp ? [subjectComp, ...others] : others });
     return out;
   }, [comps, subjectComp]);
@@ -163,7 +162,7 @@ export default function PublicComps() {
           {!(c.photo_override || c.photo_url) && <span className="cp-cardaddr-ph">{c.address}</span>}
           {isSubject && <span className="cp-subjbadge">Subject Property</span>}
           {!isSubject && c.starred && <span className="cp-starbadge">★ Top comp</span>}
-          {c.status && <span className={'cp-badge ' + statusClass(c.status)}>{c.status}</span>}
+          {!isSubject && c.status && <span className={'cp-badge ' + statusClass(c.status)}>{c.status}</span>}
         </div>
         <div className="cp-cardbody">
           <h3>{c.address}</h3>
