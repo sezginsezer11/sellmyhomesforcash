@@ -382,16 +382,9 @@ function CompsMap({ comps, subject, priceOf, ppsfOf }) {
           const pos = { lat: Number(c.lat), lng: Number(c.lng) };
           bounds.extend(pos);
           const sold = groupOf(c.status) === 'sold';
-          const shortAddr = (c.address || '').split(',')[0];
-          const priceShort = fmtFull(priceOf(c));
           const marker = new Marker({
             position: pos, map, title: c.address,
-            label: {
-              text: shortAddr + (priceShort ? '  ' + priceShort : ''),
-              color: '#26333b', fontSize: '12px', fontWeight: '600',
-              className: 'cp-pinlabel',
-            },
-            icon: { path: g.SymbolPath.CIRCLE, scale: c.starred ? 11 : 8, fillColor: c.starred ? GOLD : (sold ? LAKE : '#2f7d4f'), fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2, labelOrigin: new g.Point(0, 3.2) },
+            icon: { path: g.SymbolPath.CIRCLE, scale: c.starred ? 11 : 8, fillColor: c.starred ? GOLD : (sold ? LAKE : '#2f7d4f'), fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 },
           });
           marker.addListener('click', () => {
             const price = fmtFull(priceOf(c)); const ppsf = fmtPpsf(ppsfOf(c));
