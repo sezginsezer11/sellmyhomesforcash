@@ -46,9 +46,16 @@ export default function AdminComps() {
   const [sheetUrl, setSheetUrl] = useState('');
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState('');
-  const [popupUrl, setPopupUrl] = useState('');
+  const [dragIdx, setDragIdx] = useState(null);
+  const [overIdx, setOverIdx] = useState(null);
 
   const token = () => session?.access_token;
+
+  // MLS collaboration links detect iframe embedding and refuse to load, so open
+  // the listing in a real popup window instead of an embedded iframe.
+  const openListingPopup = (url) => {
+    window.open(url, 'listingPopup', 'width=960,height=840,noopener,noreferrer');
+  };
 
   useEffect(() => {
     let done = false;
@@ -200,21 +207,19 @@ export default function AdminComps() {
     } catch {}
   };
 
-  const moveComp = async (idx, dir) => {
-    const j = idx + dir;
-    if (j < 0 || j >= comps.length) return;
+  const reorderComps = (fromIdx, toIdx) => {
+    if (fromIdx === toIdx || fromIdx == null || toIdx == null) return;
     const arr = comps.slice();
-    [arr[idx], arr[j]] = [arr[j], arr[idx]];
+    const [moved] = arr.splice(fromIdx, 1);
+    arr.splice(toIdx, 0, moved);
     setComps(arr);
-    // persist new sort_order for both swapped rows (and keep whole list consistent)
-    try {
-      await Promise.all(arr.map((c, i) =>
-        fetch('/api/comps', {
-          method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
-          body: JSON.stringify({ comp_id: c.id, sort_order: i }),
-        })
-      ));
-    } catch {}
+    // persist new sort_order for the whole list
+    Promise.all(arr.map((c, i) =>
+      fetch('/api/comps', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+        body: JSON.stringify({ comp_id: c.id, sort_order: i }),
+      })
+    )).catch(() => {});
   };
 
   const uploadPhoto = async (compId, file) => {
@@ -376,13 +381,18 @@ export default function AdminComps() {
                   <tr><td colSpan={COLS.length + 3} className="c-empty">No comps yet. Add a property above.</td></tr>
                 )}
                 {comps.map((c, idx) => (
-                  <tr key={c.id} className={c.starred ? 'c-starred' : ''}>
+                  <tr key={c.id}
+                    className={(c.starred ? 'c-starred' : '') + (dragIdx === idx ? ' c-dragging' : '') + (overIdx === idx && dragIdx !== idx ? ' c-dragover' : '')}
+                    onDragOver={(e) => { e.preventDefault(); if (dragIdx != null && overIdx !== idx) setOverIdx(idx); }}
+                    onDrop={(e) => { e.preventDefault(); reorderComps(dragIdx, idx); setDragIdx(null); setOverIdx(null); }}
+                  >
                     <td className="c-ctrlcol">
                       <button className={'c-star' + (c.starred ? ' on' : '')} title="Star (most comparable)" onClick={() => toggleStar(c.id, c.starred)}>★</button>
-                      <div className="c-move">
-                        <button onClick={() => moveComp(idx, -1)} disabled={idx === 0} title="Move up">▲</button>
-                        <button onClick={() => moveComp(idx, 1)} disabled={idx === comps.length - 1} title="Move down">▼</button>
-                      </div>
+                      <span className="c-draghandle" title="Drag to reorder"
+                        draggable
+                        onDragStart={(e) => { setDragIdx(idx); e.dataTransfer.effectAllowed = 'move'; }}
+                        onDragEnd={() => { setDragIdx(null); setOverIdx(null); }}
+                      >⠿</span>
                     </td>
                     <td className="c-photocol">
                       <label className="c-photolabel" title="Upload / change photo">
@@ -403,7 +413,7 @@ export default function AdminComps() {
                       </td>
                     ))}
                     <td className="c-actcol">
-                      {c.redfin_url && <button className="c-view" title="Open listing" onClick={() => setPopupUrl(c.redfin_url)}>🔗</button>}
+                      {c.redfin_url && <button className="c-view" title="Open listing" onClick={() => openListingPopup(c.redfin_url)}>🔗</button>}
                       {c.redfin_url && <button className="c-refresh" title="Refresh from Redfin" onClick={() => refreshComp(c.id)}>↻</button>}
                       <button className="c-del" title="Delete" onClick={() => deleteComp(c.id)}>✕</button>
                     </td>
@@ -414,18 +424,6 @@ export default function AdminComps() {
           </div>
           )}
         </>
-      )}
-
-      {popupUrl && (
-        <div className="c-modalbg" onClick={() => setPopupUrl('')}>
-          <div className="c-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="c-modalhead">
-              <a href={popupUrl} target="_blank" rel="noopener">Open in new tab ↗</a>
-              <button className="c-modalclose" onClick={() => setPopupUrl('')}>✕</button>
-            </div>
-            <iframe src={popupUrl} className="c-modaliframe" />
-          </div>
-        </div>
       )}
 
       <style>{css}</style>
@@ -497,10 +495,11 @@ const css = `
   .c-photocol { padding: 4px !important; text-align: center; width: 66px; }
   .c-star { background: none; border: 0; cursor: pointer; font-size: 18px; color: #d5dbdf; padding: 2px; line-height: 1; }
   .c-star.on { color: #e0a800; }
-  .c-move { display: flex; flex-direction: column; gap: 1px; align-items: center; margin-top: 2px; }
-  .c-move button { background: none; border: 0; cursor: pointer; font-size: 9px; color: #8a9aa2; padding: 0 3px; line-height: 1.1; }
-  .c-move button:disabled { opacity: .25; cursor: default; }
-  .c-move button:hover:not(:disabled) { color: #296190; }
+  .c-draghandle { display: block; text-align: center; margin-top: 4px; font-size: 16px; color: #8a9aa2; cursor: grab; }
+  .c-draghandle:hover { color: #296190; }
+  .c-draghandle:active { cursor: grabbing; }
+  .c-dragging { opacity: .4; }
+  .c-dragover { box-shadow: inset 0 2px 0 #296190; }
   .c-photolabel { cursor: pointer; display: inline-block; }
   .c-thumb { width: 54px; height: 40px; object-fit: cover; border-radius: 4px; border: 1px solid #e6e9ec; display: block; }
   .c-nophoto { display: inline-flex; align-items: center; justify-content: center; width: 54px; height: 40px; border: 1px dashed #c5ccd1; border-radius: 4px; font-size: 10px; color: #8a9aa2; }
@@ -509,11 +508,4 @@ const css = `
   .c-view, .c-refresh, .c-del { background: none; border: 0; cursor: pointer; font-size: 14px; padding: 4px 6px; color: #6a7a82; }
   .c-view:hover, .c-refresh:hover { color: #296190; }
   .c-del:hover { color: #8a2020; }
-  .c-modalbg { position: fixed; inset: 0; background: rgba(20,30,38,.6); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 30px; }
-  .c-modal { background: #fff; border-radius: 10px; width: 100%; max-width: 1000px; height: 85vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.3); }
-  .c-modalhead { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid #e6e9ec; background: #f5f7f9; }
-  .c-modalhead a { color: #296190; font-size: 13.5px; font-weight: 600; text-decoration: none; }
-  .c-modalclose { background: none; border: 0; cursor: pointer; font-size: 16px; color: #6a7a82; padding: 4px 8px; }
-  .c-modalclose:hover { color: #8a2020; }
-  .c-modaliframe { flex: 1; border: 0; width: 100%; }
 `;

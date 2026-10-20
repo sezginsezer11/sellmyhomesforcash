@@ -49,6 +49,19 @@ export default function PublicComps() {
   const [expanded, setExpanded] = useState({});
   const [sort, setSort] = useState({ key: null, dir: 1 });
 
+  // Tracks how many card columns are visible, so the subject property can be
+  // repeated as the first card of every visual grid row, not just the first overall.
+  const [cols, setCols] = useState(4);
+  useEffect(() => {
+    const calc = () => {
+      const w = window.innerWidth;
+      setCols(w <= 640 ? 1 : w <= 820 ? 2 : w <= 1100 ? 3 : 4);
+    };
+    calc();
+    window.addEventListener('resize', calc);
+    return () => window.removeEventListener('resize', calc);
+  }, []);
+
   useEffect(() => {
     let alive = true;
     fetch('/api/comps?slug=' + encodeURIComponent(slug))
@@ -75,10 +88,13 @@ export default function PublicComps() {
       default: return 0;
     }
   };
+  // Starred (top comp) rows always float to the top, whatever the active sort.
   const sortedComps = useMemo(() => {
-    if (!sort.key) return comps;
     const arr = comps.slice();
     arr.sort((a, b) => {
+      const sa = a.starred ? 1 : 0, sb = b.starred ? 1 : 0;
+      if (sa !== sb) return sb - sa;
+      if (!sort.key) return 0;
       const va = sortKeyVal(a, sort.key), vb = sortKeyVal(b, sort.key);
       if (va < vb) return -1 * sort.dir;
       if (va > vb) return 1 * sort.dir;
@@ -129,19 +145,32 @@ export default function PublicComps() {
     return [subjectComp, ...sortedComps.filter((c) => c.id !== subjectComp.id)];
   }, [sortedComps, subjectComp]);
 
+  // Starred (top comp) rows float to the top within a group, subject property still first overall.
+  const starredFirst = (rows) => rows.slice().sort((a, b) => (b.starred ? 1 : 0) - (a.starred ? 1 : 0));
+
+  // Repeat the subject property as the first card of every visual grid row (appraisal-style),
+  // so it's always visible to compare against, matching the current responsive column count.
+  const repeatSubjectPerRow = (rows, subj, colCount) => {
+    if (!subj) return rows;
+    const perRow = Math.max(1, colCount - 1);
+    const out = [];
+    for (let i = 0; i < rows.length; i += perRow) out.push(subj, ...rows.slice(i, i + perRow));
+    return out.length ? out : [subj];
+  };
+
   const grouped = useMemo(() => {
     const out = [];
     const isSubj = (c) => subjectComp && c.id === subjectComp.id;
     for (const g of GROUPS) {
-      const rows = comps.filter((c) => groupOf(c.status) === g.key && !isSubj(c));
+      const rows = starredFirst(comps.filter((c) => groupOf(c.status) === g.key && !isSubj(c)));
       if (!rows.length) continue;
-      out.push({ ...g, rows: subjectComp ? [subjectComp, ...rows] : rows });
+      out.push({ ...g, rows, displayRows: repeatSubjectPerRow(rows, subjectComp, cols) });
     }
     // "Other" = anything not in a known group AND not the subject row.
-    const others = comps.filter((c) => groupOf(c.status) === 'other' && !isSubj(c));
-    if (others.length) out.push({ key: 'other', label: 'Other', badge: '\u2022', color: '#8a9aa2', rows: subjectComp ? [subjectComp, ...others] : others });
+    const others = starredFirst(comps.filter((c) => groupOf(c.status) === 'other' && !isSubj(c)));
+    if (others.length) out.push({ key: 'other', label: 'Other', badge: '\u2022', color: '#8a9aa2', rows: others, displayRows: repeatSubjectPerRow(others, subjectComp, cols) });
     return out;
-  }, [comps, subjectComp]);
+  }, [comps, subjectComp, cols]);
 
   const statsFor = (rows) => {
     const prices = rows.map(priceOf).map(toNum).filter(Boolean);
@@ -165,9 +194,11 @@ export default function PublicComps() {
   const showMap = report.show_map !== false && MAPS_KEY;
   const mapComps = comps.filter((c) => c.lat && c.lng);
 
-  const Card = (c, isSubject) => {
-    const open = !!expanded[c.id + (isSubject ? '-subj' : '')];
-    const ekey = c.id + (isSubject ? '-subj' : '');
+  const Card = (c, isSubject, idx) => {
+    const stateKey = c.id + (isSubject ? '-subj' : '');
+    const open = !!expanded[stateKey];
+    // Subject property repeats across rows — give each occurrence its own React key.
+    const ekey = isSubject ? stateKey + '-' + idx : stateKey;
     return (
       <article className={'cp-card' + (c.starred ? ' cp-star' : '') + (isSubject ? ' cp-subj' : '')} key={ekey}>
         <div className="cp-cardimg" style={(c.photo_override || c.photo_url) ? { backgroundImage: `url(${c.photo_override || c.photo_url})` } : {}}>
@@ -203,7 +234,7 @@ export default function PublicComps() {
               {c.public_remarks && <p className="cp-remarks">{c.public_remarks}</p>}
             </div>
           )}
-          <button className="cp-toggle" onClick={() => setExpanded((e) => ({ ...e, [ekey]: !e[ekey] }))}>{open ? 'Show less \u25b4' : 'View details \u25be'}</button>
+          <button className="cp-toggle" onClick={() => setExpanded((e) => ({ ...e, [stateKey]: !e[stateKey] }))}>{open ? 'Show less \u25b4' : 'View details \u25be'}</button>
         </div>
       </article>
     );
@@ -241,7 +272,7 @@ export default function PublicComps() {
       {visibleGroups.map((g) => (
         <section className="cp-group" key={g.key}>
           <div className="cp-grouphead"><h2>{g.label}</h2></div>
-          <div className="cp-cards">{g.rows.map((c, i) => Card(c, subjectComp && c.id === subjectComp.id))}</div>
+          <div className="cp-cards">{g.displayRows.map((c, i) => Card(c, subjectComp && c.id === subjectComp.id, i))}</div>
         </section>
       ))}
 
