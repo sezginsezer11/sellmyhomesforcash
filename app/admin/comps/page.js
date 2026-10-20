@@ -54,7 +54,12 @@ export default function AdminComps() {
   // MLS collaboration links detect iframe embedding and refuse to load, so open
   // the listing in a real popup window instead of an embedded iframe.
   const openListingPopup = (url) => {
-    window.open(url, 'listingPopup', 'width=960,height=840,noopener,noreferrer');
+    const w = 960, h = 840;
+    const left = Math.round((window.screen.width - w) / 2);
+    const top = Math.round((window.screen.height - h) / 2);
+    // A named, reused target silently ignores size on later calls — use '_blank' so
+    // every click forces a fresh, correctly-sized window instead of a tab.
+    window.open(url, '_blank', `width=${w},height=${h},left=${left},top=${top},toolbar=no,location=no,menubar=no,status=no,scrollbars=yes,resizable=yes,noopener,noreferrer`);
   };
 
   useEffect(() => {

@@ -43,7 +43,12 @@ const PRIMARY = [
 // MLS collaboration links detect iframe embedding and refuse to load, so open the
 // listing in a real popup window (not full screen) rather than an embedded iframe.
 const openListingPopup = (url) => {
-  window.open(url, 'listingPopup', 'width=960,height=840,noopener,noreferrer');
+  const w = 960, h = 840;
+  const left = Math.round((window.screen.width - w) / 2);
+  const top = Math.round((window.screen.height - h) / 2);
+  // A named, reused target silently ignores size on later calls — use '_blank' so
+  // every click forces a fresh, correctly-sized window instead of a tab.
+  window.open(url, '_blank', `width=${w},height=${h},left=${left},top=${top},toolbar=no,location=no,menubar=no,status=no,scrollbars=yes,resizable=yes,noopener,noreferrer`);
 };
 
 export default function PublicComps() {
@@ -54,6 +59,18 @@ export default function PublicComps() {
   const [filter, setFilter] = useState('all');
   const [expanded, setExpanded] = useState({});
   const [sort, setSort] = useState({ key: null, dir: 1 });
+
+  // Notes boxes are measured at their natural height, then all raised to match
+  // the tallest one, so the cards always line up regardless of note length.
+  const notesRefs = useRef({});
+  const [notesHeight, setNotesHeight] = useState(null);
+  const recomputeNotesHeight = () => {
+    let max = 0;
+    for (const el of Object.values(notesRefs.current)) {
+      if (el && el.scrollHeight > max) max = el.scrollHeight;
+    }
+    if (max > 0) setNotesHeight((prev) => (prev !== max ? max : prev));
+  };
 
   // Tracks how many card columns are visible, so the subject property can be
   // repeated as the first card of every visual grid row, not just the first overall.
@@ -178,6 +195,18 @@ export default function PublicComps() {
     return out;
   }, [comps, subjectComp, cols]);
 
+  useEffect(() => {
+    const raf = requestAnimationFrame(recomputeNotesHeight);
+    return () => cancelAnimationFrame(raf);
+  }, [grouped]);
+
+  useEffect(() => {
+    let t;
+    const onResize = () => { clearTimeout(t); t = setTimeout(recomputeNotesHeight, 150); };
+    window.addEventListener('resize', onResize);
+    return () => { window.removeEventListener('resize', onResize); clearTimeout(t); };
+  }, []);
+
   const statsFor = (rows) => {
     const prices = rows.map(priceOf).map(toNum).filter(Boolean);
     const ppsfs = rows.map(ppsfOf).map(toNum).filter(Boolean);
@@ -200,11 +229,13 @@ export default function PublicComps() {
   const showMap = report.show_map !== false && MAPS_KEY;
   const mapComps = comps.filter((c) => c.lat && c.lng);
 
-  const Card = (c, isSubject, idx) => {
+  const Card = (c, isSubject, idx, groupKey) => {
     const stateKey = c.id + (isSubject ? '-subj' : '');
     const open = !!expanded[stateKey];
     // Subject property repeats across rows — give each occurrence its own React key.
     const ekey = isSubject ? stateKey + '-' + idx : stateKey;
+    // Same card can appear in multiple groups (subject repeats) — key the notes ref per group too.
+    const cardKey = groupKey + '::' + ekey;
     return (
       <article className={'cp-card' + (c.starred ? ' cp-star' : '') + (isSubject ? ' cp-subj' : '')} key={ekey}>
         <div className={'cp-cardimg' + (c.redfin_url ? ' cp-clickable' : '')}
@@ -219,9 +250,13 @@ export default function PublicComps() {
           {c.redfin_url && <span className="cp-linkicon">🔗</span>}
         </div>
         {c.my_notes && (
-          <div className="cp-notes-highlight">
-            <span className="cp-notes-label">My Notes</span>
-            <span className="cp-notes-text">{c.my_notes}</span>
+          <div className="cp-notes-highlight" style={notesHeight ? { minHeight: notesHeight + 'px' } : undefined}>
+            <div className="cp-notes-inner" ref={(el) => {
+              if (el) notesRefs.current[cardKey] = el; else delete notesRefs.current[cardKey];
+            }}>
+              <span className="cp-notes-label">My Notes</span>
+              <span className="cp-notes-text">{c.my_notes}</span>
+            </div>
           </div>
         )}
         <div className="cp-cardbody">
@@ -288,7 +323,7 @@ export default function PublicComps() {
       {visibleGroups.map((g) => (
         <section className="cp-group" key={g.key}>
           <div className="cp-grouphead"><h2>{g.label}</h2></div>
-          <div className="cp-cards">{g.displayRows.map((c, i) => Card(c, subjectComp && c.id === subjectComp.id, i))}</div>
+          <div className="cp-cards">{g.displayRows.map((c, i) => Card(c, subjectComp && c.id === subjectComp.id, i, g.key))}</div>
         </section>
       ))}
 
@@ -557,7 +592,8 @@ const css = `
   .cp-starbadge { position: absolute; top: 11px; right: 11px; font-size: 10px; font-weight: 600; padding: 4px 10px; border-radius: 4px; background: ${GOLD}; color: #fff; }
   .cp-subjbadge { position: absolute; top: 11px; right: 11px; font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; padding: 4px 10px; border-radius: 4px; background: #26333b; color: #fff; }
   .cp-card.cp-subj { border: 2px solid #26333b; box-shadow: 0 12px 34px rgba(38,51,59,.16); }
-  .cp-notes-highlight { background: #fdf3da; border-top: 1px solid #eee9e1; border-bottom: 2px solid ${GOLD}; padding: 10px 20px; display: flex; flex-direction: column; gap: 2px; }
+  .cp-notes-highlight { background: #fdf3da; border-top: 1px solid #eee9e1; border-bottom: 2px solid ${GOLD}; padding: 10px 20px; display: flex; flex-direction: column; justify-content: center; }
+  .cp-notes-inner { display: flex; flex-direction: column; gap: 2px; }
   .cp-notes-label { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #9c7a2e; }
   .cp-notes-text { font-size: 13.5px; font-weight: 600; color: #4a3a12; line-height: 1.5; }
   .cp-cardbody { padding: 18px 20px 20px; display: flex; flex-direction: column; flex: 1; }
