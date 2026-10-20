@@ -114,8 +114,20 @@ export default function PublicComps() {
         if (!hit) { const t2 = stub(report?.subject_address); hit = comps.find((c) => stub(c.address) === t2); }
       }
     }
-    return hit || null;
+    if (hit) return hit;
+    // No matching comp row — synthesize a placeholder so the subject property
+    // always shows up first, appraisal-style, even before it's been added as a comp.
+    if (report?.subject_address) {
+      return { id: '__subject__', address: report.subject_address, postal_code: report.subject_zip || '', status: 'Subject' };
+    }
+    return null;
   }, [comps, report]);
+
+  // Subject property always pinned as the first row, appraisal-style — the rest stay sorted.
+  const tableRows = useMemo(() => {
+    if (!subjectComp) return sortedComps;
+    return [subjectComp, ...sortedComps.filter((c) => c.id !== subjectComp.id)];
+  }, [sortedComps, subjectComp]);
 
   const grouped = useMemo(() => {
     const out = [];
@@ -286,16 +298,19 @@ export default function PublicComps() {
                 <th className="cp-sortable" onClick={() => toggleSort('status')}>Status{arrow('status')}</th>
               </tr></thead>
               <tbody>
-                {sortedComps.map((c) => (
-                  <tr key={c.id} className={c.starred ? 'cp-trstar' : ''}>
-                    <td className="cp-trstarcell">{c.starred ? '★' : ''}</td>
-                    <td className="cp-addr">{c.address}</td><td className="cp-mls">{c.mls_number}</td>
-                    <td className="cp-r">{fmtFull(priceOf(c))}</td><td className="cp-r">{c.beds}</td><td className="cp-r">{c.baths}</td>
-                    <td className="cp-r">{fmtNum(c.living_area)}</td><td className="cp-r">{fmtPpsf(ppsfOf(c))}</td>
-                    <td className="cp-r">{c.close_date}</td><td className="cp-r">{c.days_on_market}</td>
-                    <td><span className={'cp-status ' + statusClass(c.status)}>{c.status}</span></td>
-                  </tr>
-                ))}
+                {tableRows.map((c) => {
+                  const isSubj = subjectComp && c.id === subjectComp.id;
+                  return (
+                    <tr key={c.id} className={(isSubj ? 'cp-trsubj' : '') + (c.starred ? ' cp-trstar' : '')}>
+                      <td className="cp-trstarcell">{isSubj ? '' : (c.starred ? '★' : '')}</td>
+                      <td className="cp-addr">{c.address}</td><td className="cp-mls">{c.mls_number}</td>
+                      <td className="cp-r">{fmtFull(priceOf(c))}</td><td className="cp-r">{c.beds}</td><td className="cp-r">{c.baths}</td>
+                      <td className="cp-r">{fmtNum(c.living_area)}</td><td className="cp-r">{fmtPpsf(ppsfOf(c))}</td>
+                      <td className="cp-r">{c.close_date}</td><td className="cp-r">{c.days_on_market}</td>
+                      <td>{isSubj ? <span className="cp-subjlabel">SUBJECT PROPERTY</span> : <span className={'cp-status ' + statusClass(c.status)}>{c.status}</span>}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -524,6 +539,8 @@ const css = `
   .cp-table th.cp-r, .cp-table td.cp-r { text-align: right; }
   .cp-table td { border-bottom: 1px solid #f0ece4; padding: 14px; white-space: nowrap; color: #3a4a52; font-variant-numeric: tabular-nums; }
   .cp-trstar { background: #fffdf4; } .cp-trstarcell { color: ${GOLD}; text-align: center; padding: 0 !important; width: 24px; }
+  .cp-trsubj td { background: #e9ebec; font-weight: 600; }
+  .cp-subjlabel { font-size: 10.5px; font-weight: 700; letter-spacing: .05em; color: #5a6a72; }
   .cp-addr { font-weight: 600; color: ${LAKE} !important; } .cp-mls { color: #9aa4ab !important; font-size: 13px; }
   .cp-status { font-weight: 600; } .cp-status.st-closed { color: ${LAKE}; } .cp-status.st-active { color: #2f7d4f; } .cp-status.st-pending { color: ${GOLD}; }
   .cp-ctasec { background: ${LAKE}; border-radius: 14px; padding: 44px 30px; text-align: center; margin-top: 44px; color: #fff; }
