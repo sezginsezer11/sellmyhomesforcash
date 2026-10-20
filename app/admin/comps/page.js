@@ -46,6 +46,7 @@ export default function AdminComps() {
   const [sheetUrl, setSheetUrl] = useState('');
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState('');
+  const [popupUrl, setPopupUrl] = useState('');
 
   const token = () => session?.access_token;
 
@@ -83,6 +84,17 @@ export default function AdminComps() {
 
   const setReportToggle = async (key, val) => {
     setActive((a) => ({ ...a, [key]: val }));
+    try {
+      await fetch('/api/comps', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+        body: JSON.stringify({ report_id: active.id, report_fields: { [key]: val } }),
+      });
+    } catch {}
+  };
+
+  const editReportField = (key, val) => setActive((a) => ({ ...a, [key]: val }));
+  const commitReportField = async (key, val) => {
+    setReports((rs) => rs.map((r) => r.id === active.id ? { ...r, [key]: val } : r));
     try {
       await fetch('/api/comps', {
         method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
@@ -233,6 +245,18 @@ export default function AdminComps() {
     } catch {}
   };
 
+  const deleteReport = async (e, reportId, label) => {
+    e.stopPropagation();
+    if (!window.confirm('Delete "' + label + '"? This removes it from your reports list and its public link stops working.')) return;
+    setReports((rs) => rs.filter((r) => r.id !== reportId));
+    try {
+      await fetch('/api/comps', {
+        method: 'DELETE', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+        body: JSON.stringify({ report_id: reportId }),
+      });
+    } catch {}
+  };
+
   const publicUrl = active ? (typeof window !== 'undefined' ? window.location.origin : '') + '/comps/' + active.slug : '';
   const [copied, setCopied] = useState(false);
   const copyLink = () => { navigator.clipboard?.writeText(publicUrl); setCopied(true); setTimeout(() => setCopied(false), 1500); };
@@ -270,7 +294,10 @@ export default function AdminComps() {
                   <div className="c-rtitle">{r.title || r.subject_address}</div>
                   <div className="c-rmeta">{r.client_name ? r.client_name + ' · ' : ''}/comps/{r.slug}</div>
                 </div>
-                <span className="c-open">Open →</span>
+                <div className="c-rowright">
+                  <button className="c-delreport" title="Delete report" onClick={(e) => deleteReport(e, r.id, r.title || r.subject_address)}>✕</button>
+                  <span className="c-open">Open →</span>
+                </div>
               </div>
             ))}
           </div>
@@ -279,9 +306,19 @@ export default function AdminComps() {
         <>
           <button className="c-back" onClick={() => { setActive(null); setComps([]); }}>← All reports</button>
           <div className="c-reporthead">
-            <div>
-              <h2>{active.title || active.subject_address}</h2>
-              <div className="c-rmeta">{active.client_name}</div>
+            <div className="c-headfields">
+              <label className="c-headfield">
+                <span>Subject address</span>
+                <input value={active.subject_address || ''}
+                  onChange={(e) => editReportField('subject_address', e.target.value)}
+                  onBlur={(e) => commitReportField('subject_address', e.target.value)} />
+              </label>
+              <label className="c-headfield">
+                <span>Client name</span>
+                <input value={active.client_name || ''}
+                  onChange={(e) => editReportField('client_name', e.target.value)}
+                  onBlur={(e) => commitReportField('client_name', e.target.value)} />
+              </label>
             </div>
             <div className="c-share">
               <a className="c-viewpub" href={'/comps/' + active.slug} target="_blank" rel="noopener">View public page ↗</a>
@@ -366,6 +403,7 @@ export default function AdminComps() {
                       </td>
                     ))}
                     <td className="c-actcol">
+                      {c.redfin_url && <button className="c-view" title="Open listing" onClick={() => setPopupUrl(c.redfin_url)}>🔗</button>}
                       {c.redfin_url && <button className="c-refresh" title="Refresh from Redfin" onClick={() => refreshComp(c.id)}>↻</button>}
                       <button className="c-del" title="Delete" onClick={() => deleteComp(c.id)}>✕</button>
                     </td>
@@ -376,6 +414,18 @@ export default function AdminComps() {
           </div>
           )}
         </>
+      )}
+
+      {popupUrl && (
+        <div className="c-modalbg" onClick={() => setPopupUrl('')}>
+          <div className="c-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="c-modalhead">
+              <a href={popupUrl} target="_blank" rel="noopener">Open in new tab ↗</a>
+              <button className="c-modalclose" onClick={() => setPopupUrl('')}>✕</button>
+            </div>
+            <iframe src={popupUrl} className="c-modaliframe" />
+          </div>
+        </div>
       )}
 
       <style>{css}</style>
@@ -404,9 +454,16 @@ const css = `
   .c-rtitle { font-weight: 600; font-size: 15px; }
   .c-rmeta { font-size: 13px; color: #6a7a82; margin-top: 2px; }
   .c-open { color: #296190; font-size: 14px; }
+  .c-rowright { display: flex; align-items: center; gap: 14px; }
+  .c-delreport { background: none; border: 0; cursor: pointer; font-size: 14px; padding: 4px 6px; color: #b5bcc1; }
+  .c-delreport:hover { color: #8a2020; }
   .c-back { background: none; border: 0; color: #296190; cursor: pointer; font-family: 'Jost',sans-serif; font-size: 14px; padding: 0; margin-bottom: 14px; }
   .c-reporthead { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
-  .c-reporthead h2 { font-family: 'Cormorant Garamond',serif; font-size: 26px; margin: 0; }
+  .c-headfields { display: flex; gap: 14px; flex-wrap: wrap; }
+  .c-headfield { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; font-weight: 600; color: #6a7a82; text-transform: uppercase; letter-spacing: .03em; }
+  .c-headfield input { font-family: 'Cormorant Garamond',serif; font-size: 22px; font-weight: 600; color: #1c2b33; text-transform: none; letter-spacing: normal; border: 0; border-bottom: 1px solid transparent; padding: 2px 0; min-width: 240px; background: transparent; }
+  .c-headfield input:hover { border-bottom-color: #d5dbdf; }
+  .c-headfield input:focus { outline: none; border-bottom-color: #296190; }
   .c-share { display: flex; gap: 10px; align-items: center; }
   .c-toggles { display: flex; gap: 22px; margin-bottom: 16px; flex-wrap: wrap; }
   .c-toggles label { display: flex; align-items: center; gap: 7px; font-size: 13.5px; color: #4a5a62; cursor: pointer; }
@@ -449,7 +506,14 @@ const css = `
   .c-nophoto { display: inline-flex; align-items: center; justify-content: center; width: 54px; height: 40px; border: 1px dashed #c5ccd1; border-radius: 4px; font-size: 10px; color: #8a9aa2; }
   .c-starred { background: #fffdf4; }
   .c-actcol { white-space: nowrap; padding: 0 6px !important; text-align: center; }
-  .c-refresh, .c-del { background: none; border: 0; cursor: pointer; font-size: 14px; padding: 4px 6px; color: #6a7a82; }
-  .c-refresh:hover { color: #296190; }
+  .c-view, .c-refresh, .c-del { background: none; border: 0; cursor: pointer; font-size: 14px; padding: 4px 6px; color: #6a7a82; }
+  .c-view:hover, .c-refresh:hover { color: #296190; }
   .c-del:hover { color: #8a2020; }
+  .c-modalbg { position: fixed; inset: 0; background: rgba(20,30,38,.6); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 30px; }
+  .c-modal { background: #fff; border-radius: 10px; width: 100%; max-width: 1000px; height: 85vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.3); }
+  .c-modalhead { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid #e6e9ec; background: #f5f7f9; }
+  .c-modalhead a { color: #296190; font-size: 13.5px; font-weight: 600; text-decoration: none; }
+  .c-modalclose { background: none; border: 0; cursor: pointer; font-size: 16px; color: #6a7a82; padding: 4px 8px; }
+  .c-modalclose:hover { color: #8a2020; }
+  .c-modaliframe { flex: 1; border: 0; width: 100%; }
 `;
