@@ -40,6 +40,12 @@ const PRIMARY = [
   { k: 'year_built', label: 'Year Built' },
 ];
 
+// MLS collaboration links detect iframe embedding and refuse to load, so open the
+// listing in a real popup window (not full screen) rather than an embedded iframe.
+const openListingPopup = (url) => {
+  window.open(url, 'listingPopup', 'width=960,height=840,noopener,noreferrer');
+};
+
 export default function PublicComps() {
   const { slug } = useParams();
   const [state, setState] = useState('loading');
@@ -201,12 +207,23 @@ export default function PublicComps() {
     const ekey = isSubject ? stateKey + '-' + idx : stateKey;
     return (
       <article className={'cp-card' + (c.starred ? ' cp-star' : '') + (isSubject ? ' cp-subj' : '')} key={ekey}>
-        <div className="cp-cardimg" style={(c.photo_override || c.photo_url) ? { backgroundImage: `url(${c.photo_override || c.photo_url})` } : {}}>
+        <div className={'cp-cardimg' + (c.redfin_url ? ' cp-clickable' : '')}
+          style={(c.photo_override || c.photo_url) ? { backgroundImage: `url(${c.photo_override || c.photo_url})` } : {}}
+          onClick={c.redfin_url ? () => openListingPopup(c.redfin_url) : undefined}
+          title={c.redfin_url ? 'Open listing' : undefined}
+        >
           {!(c.photo_override || c.photo_url) && <span className="cp-cardaddr-ph">{c.address}</span>}
           {isSubject && <span className="cp-subjbadge">Subject Property</span>}
           {!isSubject && c.starred && <span className="cp-starbadge">★ Top comp</span>}
           {!isSubject && c.status && <span className={'cp-badge ' + statusClass(c.status)}>{c.status}</span>}
+          {c.redfin_url && <span className="cp-linkicon">🔗</span>}
         </div>
+        {c.my_notes && (
+          <div className="cp-notes-highlight">
+            <span className="cp-notes-label">My Notes</span>
+            <span className="cp-notes-text">{c.my_notes}</span>
+          </div>
+        )}
         <div className="cp-cardbody">
           <h3>{c.address}</h3>
           <div className="cp-rows">
@@ -221,7 +238,6 @@ export default function PublicComps() {
                 </div>
               );
             })}
-            {c.my_notes && <div className="cp-row notes"><span className="cp-k">My Notes</span><span className="cp-v">{c.my_notes}</span></div>}
           </div>
           {open && (
             <div className="cp-more">
@@ -461,7 +477,7 @@ function CompsMap({ comps, subject, priceOf, ppsfOf }) {
 
   return (
     <section className="cp-mapsec">
-      <div className="cp-sechead"><span className="cp-secnum">\u25c9</span><h2>Location Map</h2></div>
+      <div className="cp-sechead"><h2>Location Map</h2></div>
       <div className="cp-maplegend">
         <span><i style={{ background: LAKE }}></i> Sold</span>
         <span><i style={{ background: '#2f7d4f' }}></i> Active / Other</span>
@@ -533,12 +549,17 @@ const css = `
   .cp-card { background: #fff; border: 1px solid #eee9e1; border-radius: 11px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 10px 30px rgba(52,74,87,.07); }
   .cp-card.cp-star { border: 2px solid ${GOLD}; }
   .cp-cardimg { position: relative; aspect-ratio: 16/10; background-size: cover; background-position: center; background-color: ${LAKE}; display: flex; align-items: center; justify-content: center; }
+  .cp-cardimg.cp-clickable { cursor: pointer; }
+  .cp-linkicon { position: absolute; bottom: 10px; right: 11px; font-size: 13px; background: rgba(255,255,255,.92); border-radius: 50%; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; }
   .cp-cardaddr-ph { font-family: 'Cormorant Garamond',serif; font-size: 22px; color: rgba(255,255,255,.55); text-align: center; padding: 0 18px; }
   .cp-badge { position: absolute; top: 11px; left: 11px; font-size: 10px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; padding: 4px 10px; border-radius: 4px; background: rgba(255,255,255,.95); color: ${LAKE}; }
   .cp-badge.st-closed { background: ${LAKE}; color: #fff; } .cp-badge.st-active { background: #2f7d4f; color: #fff; } .cp-badge.st-pending { background: ${GOLD}; color: #fff; }
   .cp-starbadge { position: absolute; top: 11px; right: 11px; font-size: 10px; font-weight: 600; padding: 4px 10px; border-radius: 4px; background: ${GOLD}; color: #fff; }
   .cp-subjbadge { position: absolute; top: 11px; right: 11px; font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; padding: 4px 10px; border-radius: 4px; background: #26333b; color: #fff; }
   .cp-card.cp-subj { border: 2px solid #26333b; box-shadow: 0 12px 34px rgba(38,51,59,.16); }
+  .cp-notes-highlight { background: #fdf3da; border-top: 1px solid #eee9e1; border-bottom: 2px solid ${GOLD}; padding: 10px 20px; display: flex; flex-direction: column; gap: 2px; }
+  .cp-notes-label { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #9c7a2e; }
+  .cp-notes-text { font-size: 13.5px; font-weight: 600; color: #4a3a12; line-height: 1.5; }
   .cp-cardbody { padding: 18px 20px 20px; display: flex; flex-direction: column; flex: 1; }
   .cp-cardbody h3 { font-family: 'Cormorant Garamond',serif; font-size: 21px; font-weight: 600; margin: 0 0 2px; color: ${LAKE}; line-height: 1.15; }
   .cp-rows { margin-top: 12px; display: flex; flex-direction: column; }
@@ -546,8 +567,6 @@ const css = `
   .cp-row .cp-k { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: #9aa4ab; }
   .cp-row .cp-v { font-size: 14px; font-weight: 600; color: #26333b; text-align: right; font-variant-numeric: tabular-nums; }
   .cp-row .cp-v.big { font-size: 16px; } .cp-row .cp-v.gold { color: ${GOLD}; }
-  .cp-row.notes { grid-template-columns: 1fr; gap: 3px; }
-  .cp-row.notes .cp-v { text-align: left; font-weight: 400; font-size: 13px; color: #5a6a72; line-height: 1.55; }
   .cp-toggle { margin-top: 14px; background: none; border: 0; color: ${GOLD}; cursor: pointer; font-family: 'Jost',sans-serif; font-size: 13px; font-weight: 600; padding: 0; text-align: left; }
   .cp-more { margin-top: 12px; padding-top: 12px; border-top: 1px dashed #efe9df; }
   .cp-moregrid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; }
