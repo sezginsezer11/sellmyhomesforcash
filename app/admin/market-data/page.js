@@ -16,7 +16,7 @@ const GOLD = '#e0a800';
 export default function MarketDataPage() {
   const [session, setSession] = useState(null);
   const [checking, setChecking] = useState(true);
-  const [tab, setTab] = useState('upload');
+  const [tab, setTab] = useState('search');
   const token = () => session?.access_token;
 
   useEffect(() => {
@@ -39,12 +39,17 @@ export default function MarketDataPage() {
     <div className="m-wrap">
       <div className="m-head">
         <h1>Market Data</h1>
-        <div><a className="m-link" href="/admin">← Leads</a><a className="m-link" href="/admin/comps">Comps</a><span className="m-me">{session.user.email}</span></div>
+        <div className="m-headright">
+          <a className="m-link" href="/admin">← Leads</a>
+          <a className="m-link" href="/admin/comps">Comps</a>
+          <span className="m-me">{session.user.email}</span>
+          <button className="m-uploadbtn" onClick={() => setTab('upload')}>⬆ Upload new list</button>
+        </div>
       </div>
 
       <div className="m-tabs">
-        <button className={'m-tab' + (tab === 'upload' ? ' on' : '')} onClick={() => setTab('upload')}>Upload</button>
         <button className={'m-tab' + (tab === 'search' ? ' on' : '')} onClick={() => setTab('search')}>Search</button>
+        <button className={'m-tab' + (tab === 'upload' ? ' on' : '')} onClick={() => setTab('upload')}>Upload</button>
       </div>
 
       {tab === 'upload' ? <UploadTab token={token} /> : <SearchTab token={token} />}
@@ -151,6 +156,7 @@ function SearchTab({ token }) {
   const [timelineKey, setTimelineKey] = useState('');
   const [timeline, setTimeline] = useState([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
+  const [timelineIndex, setTimelineIndex] = useState(-1); // position within sortedRows, for Prev/Next
 
   const runSearch = async () => {
     setLoading(true); setSearched(true);
@@ -167,8 +173,9 @@ function SearchTab({ token }) {
     setLoading(false);
   };
 
-  const openTimeline = async (groupKey) => {
+  const openTimeline = async (groupKey, index) => {
     setTimelineKey(groupKey); setTimeline([]); setTimelineLoading(true);
+    setTimelineIndex(index != null ? index : -1);
     try {
       const res = await fetch('/api/market-data?group_key=' + encodeURIComponent(groupKey), { headers: { Authorization: 'Bearer ' + token() } });
       const j = await res.json();
@@ -177,8 +184,15 @@ function SearchTab({ token }) {
     setTimelineLoading(false);
   };
 
-  // Every episode in a timeline shares the same property, so the first row
-  // (oldest, per the API's ordering) identifies it for the modal header.
+  const goToTimeline = (delta) => {
+    const next = timelineIndex + delta;
+    if (next < 0 || next >= sortedRows.length) return;
+    const r = sortedRows[next];
+    openTimeline(r.group_key, next);
+  };
+
+  // Every episode in a timeline shares the same property; timeline[0] (now
+  // newest-first) identifies it for the modal header.
   const timelineProperty = timeline[0];
 
   const rowMlsNumber = (r) => (mode === 'prospects' ? r.last_mls_number : r.mls_number);
@@ -336,8 +350,8 @@ function SearchTab({ token }) {
               </thead>
               <tbody>
                 {rows.length === 0 && <tr><td colSpan={9} className="m-empty">No matches.</td></tr>}
-                {mode === 'prospects' ? sortedRows.map((r) => (
-                  <tr key={r.group_key} onClick={() => openTimeline(r.group_key)} className="m-clickrow">
+                {mode === 'prospects' ? sortedRows.map((r, i) => (
+                  <tr key={r.group_key} onClick={() => openTimeline(r.group_key, i)} className="m-clickrow">
                     <td className="m-starcol" onClick={(e) => e.stopPropagation()}>
                       <button className={'m-starbtn' + (isStarred(r) ? ' on' : '')} onClick={() => toggleStar(r)}>★</button>
                     </td>
@@ -353,8 +367,8 @@ function SearchTab({ token }) {
                     <td className="m-r">{r.times_listed_without_selling}</td>
                     <td>{r.beds_total || '—'}/{r.baths_total || '—'}/{r.living_area ? Number(r.living_area).toLocaleString() : '—'}</td>
                   </tr>
-                )) : sortedRows.map((r) => (
-                  <tr key={r.id} onClick={() => openTimeline(r.group_key)} className="m-clickrow">
+                )) : sortedRows.map((r, i) => (
+                  <tr key={r.id} onClick={() => openTimeline(r.group_key, i)} className="m-clickrow">
                     <td className="m-starcol" onClick={(e) => e.stopPropagation()}>
                       <button className={'m-starbtn' + (isStarred(r) ? ' on' : '')} title={r.is_current_prospect ? 'Currently a prospect' : ''} onClick={() => toggleStar(r)}>★</button>
                     </td>
@@ -382,12 +396,24 @@ function SearchTab({ token }) {
         <div className="m-modalbg" onClick={() => setTimelineKey('')}>
           <div className="m-modal" onClick={(e) => e.stopPropagation()}>
             <div className="m-modalhead">
+              <div className="m-modalnav">
+                <button className="m-navbtn" onClick={() => goToTimeline(-1)} disabled={timelineIndex <= 0} title="Previous">‹ Prev</button>
+                <button className="m-navbtn" onClick={() => goToTimeline(1)} disabled={timelineIndex < 0 || timelineIndex >= sortedRows.length - 1} title="Next">Next ›</button>
+              </div>
               <span>Listing history</span>
               <button className="m-modalclose" onClick={() => setTimelineKey('')}>✕</button>
             </div>
             {timelineProperty && (
               <div className="m-modalproperty">
-                <div className="m-modaladdr">{timelineProperty.address}</div>
+                <div className="m-modaladdrrow">
+                  <div className="m-modaladdr">{timelineProperty.address}</div>
+                  {timelineProperty.address && (
+                    <a className="m-mapsbtn" target="_blank" rel="noopener"
+                      href={'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(timelineProperty.address)}>
+                      📍 Google Maps
+                    </a>
+                  )}
+                </div>
                 <div className="m-modalsub">
                   {[timelineProperty.subdivision || timelineProperty.neighborhood || timelineProperty.mls_area,
                     timelineProperty.beds_total && `${timelineProperty.beds_total} bd`,
@@ -504,7 +530,7 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick }) {
             );
             info.open(map, marker);
           });
-          marker.addListener('click', () => onMarkerClick(r.group_key));
+          marker.addListener('click', () => onMarkerClick(r.group_key, rows.indexOf(r)));
         });
         map.fitBounds(bounds, 60);
         g.event.addListenerOnce(map, 'idle', () => { if (pts.length === 1) map.setZoom(15); });
@@ -531,8 +557,11 @@ const css = `
   .m-wrap { max-width: 1300px; margin: 0 auto; padding: 24px 18px 60px; font-family: 'Jost',system-ui,sans-serif; color: #1c2b33; }
   .m-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; flex-wrap: wrap; gap: 10px; }
   .m-head h1 { font-family: 'Cormorant Garamond',serif; font-size: 30px; margin: 0; }
-  .m-link { color: #296190; text-decoration: none; margin-right: 14px; font-size: 14px; }
+  .m-headright { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .m-link { color: #296190; text-decoration: none; font-size: 14px; }
   .m-me { font-size: 13px; color: #6a7a82; }
+  .m-uploadbtn { padding: 8px 15px; background: #296190; color: #fff; border: 0; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .m-uploadbtn:hover { background: #21506f; }
   .m-tabs { display: flex; gap: 8px; margin-bottom: 20px; border-bottom: 1px solid #e6e9ec; }
   .m-tab { background: none; border: 0; border-bottom: 2px solid transparent; padding: 10px 4px; margin-right: 18px; font-family: 'Jost',sans-serif; font-size: 15px; font-weight: 600; color: #6a7a82; cursor: pointer; }
   .m-tab.on { color: #296190; border-bottom-color: #296190; }
@@ -594,10 +623,17 @@ const css = `
 
   .m-modalbg { position: fixed; inset: 0; background: rgba(20,30,38,.55); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 24px; }
   .m-modal { background: #fff; border-radius: 10px; width: 100%; max-width: 560px; max-height: 80vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.3); }
-  .m-modalhead { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid #e6e9ec; font-weight: 600; }
+  .m-modalhead { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid #e6e9ec; font-weight: 600; gap: 10px; }
   .m-modalclose { background: none; border: 0; cursor: pointer; font-size: 16px; color: #6a7a82; }
+  .m-modalnav { display: flex; gap: 6px; }
+  .m-navbtn { background: none; border: 1px solid #d5dbdf; border-radius: 6px; padding: 5px 10px; font-family: 'Jost',sans-serif; font-size: 12px; font-weight: 600; color: #4a5a62; cursor: pointer; }
+  .m-navbtn:hover:not(:disabled) { border-color: #296190; color: #296190; }
+  .m-navbtn:disabled { opacity: .35; cursor: default; }
   .m-modalproperty { padding: 12px 18px; background: #f5f9fc; border-bottom: 1px solid #e6e9ec; }
+  .m-modaladdrrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .m-modaladdr { font-weight: 700; font-size: 15px; color: #1c2b33; }
+  .m-mapsbtn { font-size: 12.5px; font-weight: 600; color: #296190; text-decoration: none; white-space: nowrap; border: 1px solid #bcd2e4; border-radius: 6px; padding: 5px 10px; }
+  .m-mapsbtn:hover { background: #eaf2fa; }
   .m-modalsub { font-size: 12.5px; color: #6a7a82; margin-top: 2px; }
   .m-modalbody { padding: 16px 18px; overflow-y: auto; }
   .m-timeline { display: flex; flex-direction: column; gap: 12px; }

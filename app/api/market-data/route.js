@@ -161,7 +161,7 @@ export async function GET(request) {
         .from('mls_listings')
         .select('*')
         .eq('group_key', groupKey)
-        .order('listing_contract_date', { ascending: true, nullsFirst: true });
+        .order('listing_contract_date', { ascending: false, nullsFirst: false });
       if (error) return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 });
       return NextResponse.json({ ok: true, listings: data || [] });
     }
