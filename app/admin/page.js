@@ -171,6 +171,7 @@ export default function AdminPage() {
         <h1>Leads <span className="a-count">{view.length}</span></h1>
         <div className="a-head-right">
           <a className="a-tool" href="/admin/comps">Comps</a>
+          <a className="a-tool" href="/admin/market-data">Market Data</a>
           <a className="a-tool" href="/fix-and-flip-calculator" target="_blank" rel="noopener">Fix &amp; Flip Calculator ↗</a>
           <span className="a-me">{session.user.email}</span>
           <button className="a-logout" onClick={logout}>Sign out</button>
