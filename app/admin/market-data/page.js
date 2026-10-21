@@ -6,6 +6,10 @@ import { supabaseBrowser } from '../../../lib/supabase-browser';
 const STATUSES = ['expired', 'canceled', 'withdrawn'];
 const fmtMoney = (v) => (v == null ? '—' : '$' + Number(v).toLocaleString());
 const fmtDate = (v) => (v ? new Date(v + 'T00:00:00').toLocaleDateString() : '—');
+const STATUS_COLOR = {
+  active: '#1c5b34', pending: '#b26a00', sold: '#296190',
+  expired: '#8a5a20', canceled: '#8a2020', withdrawn: '#5a3d8a', unknown: '#6a7a82',
+};
 
 export default function MarketDataPage() {
   const [session, setSession] = useState(null);
@@ -172,8 +176,13 @@ function SearchTab({ token }) {
   // (oldest, per the API's ordering) identifies it for the modal header.
   const timelineProperty = timeline[0];
 
+  const rowMlsNumber = (r) => (mode === 'prospects' ? r.last_mls_number : r.mls_number);
+  const isStarred = (r) => !!r.starred || (mode === 'all' && r.is_current_prospect);
+
   const sortKeyVal = (r, key) => {
     switch (key) {
+      case 'star': return isStarred(r) ? 1 : 0;
+      case 'tag': return (r.tag || '').toLowerCase() || '￿'; // blanks sort last
       case 'address': return (r.address || '').toLowerCase();
       case 'community': return (r.subdivision || r.neighborhood || r.mls_area || '').toLowerCase();
       case 'status': return mode === 'prospects' ? (r.last_status || '') : (r.status_normalized || '');
@@ -184,8 +193,29 @@ function SearchTab({ token }) {
       default: return 0;
     }
   };
-  const toggleSort = (key) => setSort((s) => (s.key === key ? { key, dir: -s.dir } : { key, dir: 1 }));
+  const toggleSort = (key) => setSort((s) => (s.key === key ? { key, dir: -s.dir } : { key, dir: key === 'star' ? -1 : 1 }));
   const sortArrow = (key) => (sort.key === key ? (sort.dir === 1 ? ' ▴' : ' ▾') : '');
+
+  const toggleStar = (r) => {
+    const mlsNumber = rowMlsNumber(r);
+    const next = !r.starred;
+    setRows((rs) => rs.map((x) => (rowMlsNumber(x) === mlsNumber ? { ...x, starred: next } : x)));
+    fetch('/api/market-data', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+      body: JSON.stringify({ mls_number: mlsNumber, starred: next }),
+    }).catch(() => {});
+  };
+  const saveTag = (r, tag) => {
+    const mlsNumber = rowMlsNumber(r);
+    fetch('/api/market-data', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+      body: JSON.stringify({ mls_number: mlsNumber, tag }),
+    }).catch(() => {});
+  };
+  const editTag = (r, tag) => {
+    const mlsNumber = rowMlsNumber(r);
+    setRows((rs) => rs.map((x) => (rowMlsNumber(x) === mlsNumber ? { ...x, tag } : x)));
+  };
   const sortedRows = useMemo(() => {
     if (!sort.key) return rows;
     const arr = rows.slice();
@@ -243,9 +273,11 @@ function SearchTab({ token }) {
             <table className="m-table">
               <thead>
                 <tr>
+                  <th className="m-starcol m-sortable" onClick={() => toggleSort('star')} title="Sort by starred">★</th>
                   <th className="m-sortable" onClick={() => toggleSort('address')}>Address{sortArrow('address')}</th>
                   <th className="m-sortable" onClick={() => toggleSort('community')}>Community{sortArrow('community')}</th>
                   <th className="m-sortable" onClick={() => toggleSort('status')}>Status{sortArrow('status')}</th>
+                  <th className="m-sortable" onClick={() => toggleSort('tag')}>Tag{sortArrow('tag')}</th>
                   <th className="m-r m-sortable" onClick={() => toggleSort('price')}>List Price{sortArrow('price')}</th>
                   <th className="m-sortable" onClick={() => toggleSort('off_market')}>Off-Market{sortArrow('off_market')}</th>
                   <th className="m-r m-sortable" onClick={() => toggleSort('times_listed')}>Times Listed{sortArrow('times_listed')}</th>
@@ -253,12 +285,19 @@ function SearchTab({ token }) {
                 </tr>
               </thead>
               <tbody>
-                {rows.length === 0 && <tr><td colSpan={7} className="m-empty">No matches.</td></tr>}
+                {rows.length === 0 && <tr><td colSpan={9} className="m-empty">No matches.</td></tr>}
                 {mode === 'prospects' ? sortedRows.map((r) => (
                   <tr key={r.group_key} onClick={() => openTimeline(r.group_key)} className="m-clickrow">
+                    <td className="m-starcol" onClick={(e) => e.stopPropagation()}>
+                      <button className={'m-starbtn' + (isStarred(r) ? ' on' : '')} onClick={() => toggleStar(r)}>★</button>
+                    </td>
                     <td className="m-addr">{r.address}{r.flagged && <span className="m-flag" title="No APN — matched by address">⚑</span>}</td>
                     <td>{r.subdivision || r.neighborhood || r.mls_area || '—'}</td>
-                    <td><span className="m-status">{r.last_status}</span></td>
+                    <td><span className="m-status" style={{ background: (STATUS_COLOR[r.last_status] || '#6a7a82') + '1c', color: STATUS_COLOR[r.last_status] || '#6a7a82' }}>{r.last_status}</span></td>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <input className="m-taginput" placeholder="+ tag" value={r.tag || ''}
+                        onChange={(e) => editTag(r, e.target.value)} onBlur={(e) => saveTag(r, e.target.value)} />
+                    </td>
                     <td className="m-r">{fmtMoney(r.last_list_price)}</td>
                     <td>{fmtDate(r.last_off_market_date)} <span className="m-dim">({r.days_since_off_market}d)</span></td>
                     <td className="m-r">{r.times_listed_without_selling}</td>
@@ -266,9 +305,16 @@ function SearchTab({ token }) {
                   </tr>
                 )) : sortedRows.map((r) => (
                   <tr key={r.id} onClick={() => openTimeline(r.group_key)} className="m-clickrow">
+                    <td className="m-starcol" onClick={(e) => e.stopPropagation()}>
+                      <button className={'m-starbtn' + (isStarred(r) ? ' on' : '')} title={r.is_current_prospect ? 'Currently a prospect' : ''} onClick={() => toggleStar(r)}>★</button>
+                    </td>
                     <td className="m-addr">{r.address}{r.flagged && <span className="m-flag" title="No APN — matched by address">⚑</span>}</td>
                     <td>{r.subdivision || r.neighborhood || r.mls_area || '—'}</td>
-                    <td><span className="m-status">{r.status_normalized}</span></td>
+                    <td><span className="m-status" style={{ background: (STATUS_COLOR[r.status_normalized] || '#6a7a82') + '1c', color: STATUS_COLOR[r.status_normalized] || '#6a7a82' }}>{r.status_normalized}</span></td>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <input className="m-taginput" placeholder="+ tag" value={r.tag || ''}
+                        onChange={(e) => editTag(r, e.target.value)} onBlur={(e) => saveTag(r, e.target.value)} />
+                    </td>
                     <td className="m-r">{fmtMoney(r.orig_list_price)}</td>
                     <td>{fmtDate(r.off_market_date)}</td>
                     <td className="m-r">—</td>
@@ -363,20 +409,28 @@ const css = `
   .m-exportbtn { padding: 9px 16px; background: #1c5b34; color: #fff; border: 0; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13.5px; font-weight: 600; cursor: pointer; }
 
   .m-resultcount { font-size: 13px; color: #6a7a82; margin-bottom: 8px; }
-  .m-tablewrap { overflow-x: auto; border: 1px solid #e6e9ec; border-radius: 8px; background: #fff; }
+  .m-tablewrap { overflow-x: auto; border: 1px solid #e6e9ec; border-radius: 8px; background: #fff; box-shadow: 0 4px 16px rgba(20,40,60,.04); }
   .m-table { border-collapse: collapse; width: 100%; font-size: 13px; }
-  .m-table th { background: #f5f7f9; text-align: left; padding: 10px 12px; font-size: 11.5px; font-weight: 600; color: #4a5a62; text-transform: uppercase; letter-spacing: .03em; border-bottom: 1px solid #e6e9ec; white-space: nowrap; }
+  .m-table th { background: #eef2f5; text-align: left; padding: 11px 12px; font-size: 11.5px; font-weight: 700; color: #3a4a52; text-transform: uppercase; letter-spacing: .03em; border-bottom: 1px solid #dde3e7; white-space: nowrap; position: sticky; top: 0; z-index: 1; }
   .m-table th.m-r, .m-table td.m-r { text-align: right; }
   .m-table th.m-sortable { cursor: pointer; user-select: none; }
   .m-table th.m-sortable:hover { color: #296190; }
+  .m-table th + th, .m-table td + td { border-left: 1px solid #f0f3f5; }
   .m-table td { border-bottom: 1px solid #f0f3f5; padding: 11px 12px; white-space: nowrap; }
+  .m-table tbody tr:nth-child(even) { background: #fafbfc; }
   .m-clickrow { cursor: pointer; }
-  .m-clickrow:hover { background: #f5f9fc; }
-  .m-addr { font-weight: 600; }
+  .m-clickrow:hover { background: #eef5fb !important; }
+  .m-addr { font-weight: 600; color: #1c2b33; }
   .m-flag { margin-left: 6px; color: #b26a00; }
-  .m-status { background: #eef1f3; color: #4a5a62; font-size: 11.5px; font-weight: 600; text-transform: uppercase; padding: 3px 9px; border-radius: 10px; }
+  .m-status { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em; padding: 3px 9px; border-radius: 10px; }
   .m-dim { color: #9aa4ab; font-size: 12px; }
   .m-empty { text-align: center; color: #6a7a82; padding: 24px; }
+  .m-starcol { width: 36px; text-align: center !important; padding: 6px !important; }
+  .m-starbtn { background: none; border: 0; cursor: pointer; font-size: 16px; color: #d5dbdf; padding: 2px; line-height: 1; }
+  .m-starbtn.on { color: #e0a800; }
+  .m-starbtn:hover { color: #b8860b; }
+  .m-taginput { width: 100px; padding: 5px 7px; border: 1px solid #e6e9ec; border-radius: 5px; font-family: 'Jost',sans-serif; font-size: 12.5px; background: #fafbfc; }
+  .m-taginput:focus { outline: none; border-color: #296190; background: #fff; }
 
   .m-modalbg { position: fixed; inset: 0; background: rgba(20,30,38,.55); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 24px; }
   .m-modal { background: #fff; border-radius: 10px; width: 100%; max-width: 560px; max-height: 80vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.3); }

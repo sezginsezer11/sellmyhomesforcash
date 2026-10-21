@@ -87,7 +87,7 @@ export async function POST(request) {
 }
 
 const SEARCH_FIELDS_PROSPECTS = [
-  'group_key', 'apn_normalized', 'flagged', 'last_mls_number', 'address', 'subdivision',
+  'group_key', 'apn_normalized', 'flagged', 'last_id', 'last_mls_number', 'starred', 'tag', 'address', 'subdivision',
   'neighborhood', 'mls_area', 'property_sub_type', 'beds_total', 'baths_total', 'living_area',
   'lot_size_sqft', 'year_built', 'last_status', 'last_list_price', 'last_current_price',
   'original_list_price', 'last_off_market_date', 'days_since_off_market',
@@ -139,7 +139,7 @@ export async function GET(request) {
       if (priceMax) q = q.lte('last_list_price', Number(priceMax));
       if (beds) q = q.gte('beds_total', Number(beds));
       if (subType) q = q.ilike('property_sub_type', `%${escLike(subType)}%`);
-      const { data, error } = await q.order('last_off_market_date', { ascending: false }).limit(500);
+      const { data, error } = await q.order('last_off_market_date', { ascending: false }).limit(20000);
       if (error) { console.error(error); return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 }); }
       return NextResponse.json({ ok: true, rows: data || [], mode: 'prospects' });
     }
@@ -155,11 +155,43 @@ export async function GET(request) {
     if (priceMax) q = q.lte('orig_list_price', Number(priceMax));
     if (beds) q = q.gte('beds_total', Number(beds));
     if (subType) q = q.ilike('property_sub_type', `%${escLike(subType)}%`);
-    const { data, error } = await q.order('uploaded_at', { ascending: false }).limit(500);
+    const { data, error } = await q.order('uploaded_at', { ascending: false }).limit(20000);
     if (error) { console.error(error); return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 }); }
-    return NextResponse.json({ ok: true, rows: data || [], mode: 'all' });
+
+    // Mark rows that are currently the live prospect for their group, so "All
+    // history" can visually flag them even though every row there isn't one.
+    const { data: prospectMls } = await supabaseAdmin.from('mls_prospects').select('last_mls_number');
+    const prospectSet = new Set((prospectMls || []).map((p) => p.last_mls_number));
+    const rows = (data || []).map((r) => ({ ...r, is_current_prospect: prospectSet.has(r.mls_number) }));
+
+    return NextResponse.json({ ok: true, rows, mode: 'all' });
   } catch (e) {
     console.error('market-data GET error:', e);
+    return NextResponse.json({ ok: false, error: 'Something went wrong.' }, { status: 500 });
+  }
+}
+
+// PUT — admin toggles star / sets a tag on one listing episode.
+export async function PUT(request) {
+  try {
+    const admin = await requireAdmin(request);
+    if (!admin) return NextResponse.json({ ok: false, error: 'Unauthorized.' }, { status: 401 });
+
+    const body = await request.json();
+    const mlsNumber = (body.mls_number || '').toString();
+    if (!mlsNumber) return NextResponse.json({ ok: false, error: 'mls_number required.' }, { status: 400 });
+
+    const update = {};
+    if (body.starred != null) update.starred = body.starred === true || body.starred === 'true';
+    if (body.tag != null) update.tag = body.tag.toString().slice(0, 80);
+    if (Object.keys(update).length === 0) return NextResponse.json({ ok: false, error: 'Nothing to update.' }, { status: 400 });
+    update.updated_at = new Date().toISOString();
+
+    const { error } = await supabaseAdmin.from('mls_listings').update(update).eq('mls_number', mlsNumber);
+    if (error) { console.error(error); return NextResponse.json({ ok: false, error: 'Could not save.' }, { status: 500 }); }
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    console.error('market-data PUT error:', e);
     return NextResponse.json({ ok: false, error: 'Something went wrong.' }, { status: 500 });
   }
 }
