@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../lib/supabase';
 import { parseMlsCsv } from '../../../lib/mls';
+import { geocodeAddress } from '../../../lib/sheets';
 
 function isAdminEmail(email) {
   const list = (process.env.ADMIN_EMAILS || 'sez@carmelvalley.com')
@@ -29,6 +30,50 @@ export async function POST(request) {
     if (!admin) return NextResponse.json({ ok: false, error: 'Unauthorized.' }, { status: 401 });
 
     const body = await request.json();
+
+    // Geocode a small batch of not-yet-mapped addresses (bounded per call so it
+    // never risks a serverless timeout — the UI loops this until none remain).
+    if (body.action === 'geocode_batch') {
+      const limit = Math.min(Number(body.limit) || 25, 50);
+      const { data: candidates, error: candErr } = await supabaseAdmin
+        .from('mls_listings')
+        .select('address, postal_code')
+        .is('lat', null)
+        .not('address', 'is', null)
+        .order('id', { ascending: true })
+        .limit(2000);
+      if (candErr) {
+        console.error('market-data geocode candidates error:', candErr);
+        return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 });
+      }
+
+      const seen = new Map();
+      for (const c of candidates || []) {
+        const key = (c.address || '').trim().toLowerCase();
+        if (!seen.has(key)) seen.set(key, { address: c.address, postal_code: c.postal_code });
+        if (seen.size >= limit) break;
+      }
+
+      let geocoded = 0, failed = 0;
+      for (const { address, postal_code } of seen.values()) {
+        const geo = await geocodeAddress(address, postal_code);
+        if (geo && geo.lat != null) {
+          geocoded++;
+          await supabaseAdmin.from('mls_listings').update({ lat: geo.lat, lng: geo.lng }).eq('address', address);
+        } else {
+          failed++;
+          // 0,0 is a sentinel for "tried, couldn't geocode" so it isn't retried every
+          // batch forever — the map already treats falsy lat/lng as "not plottable".
+          await supabaseAdmin.from('mls_listings').update({ lat: 0, lng: 0 }).eq('address', address);
+        }
+      }
+
+      const { count: remaining } = await supabaseAdmin
+        .from('mls_listings').select('*', { count: 'exact', head: true }).is('lat', null).not('address', 'is', null);
+
+      return NextResponse.json({ ok: true, geocoded, failed, processed: seen.size, remaining: remaining || 0 });
+    }
+
     if (body.action !== 'upload_csv') {
       return NextResponse.json({ ok: false, error: 'Unknown action.' }, { status: 400 });
     }
@@ -98,7 +143,7 @@ const SEARCH_FIELDS_PROSPECTS = [
   'neighborhood', 'mls_area', 'property_sub_type', 'beds_total', 'baths_total', 'living_area',
   'lot_size_sqft', 'year_built', 'last_status', 'last_list_price', 'last_current_price',
   'original_list_price', 'last_off_market_date', 'days_since_off_market',
-  'total_listings', 'times_listed_without_selling',
+  'total_listings', 'times_listed_without_selling', 'lat', 'lng',
 ];
 
 // GET — admin search (prospects or all history), or a single APN/address-group's timeline.

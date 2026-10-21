@@ -10,6 +10,8 @@ const STATUS_COLOR = {
   active: '#1c5b34', pending: '#b26a00', sold: '#296190',
   expired: '#8a5a20', canceled: '#8a2020', withdrawn: '#5a3d8a', unknown: '#6a7a82',
 };
+const MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY;
+const GOLD = '#e0a800';
 
 export default function MarketDataPage() {
   const [session, setSession] = useState(null);
@@ -143,6 +145,9 @@ function SearchTab({ token }) {
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const [sort, setSort] = useState({ key: null, dir: 1 });
+  const [view, setView] = useState('table'); // table | map
+  const [geocoding, setGeocoding] = useState(false);
+  const [geoProgress, setGeoProgress] = useState(null); // { done, remaining }
   const [timelineKey, setTimelineKey] = useState('');
   const [timeline, setTimeline] = useState([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
@@ -241,6 +246,28 @@ function SearchTab({ token }) {
     a.click(); URL.revokeObjectURL(url);
   };
 
+  // Geocodes the whole database (not just the current search), in small bounded
+  // batches so no single request risks a serverless timeout. Loops until none remain.
+  const runGeocodeBackfill = async () => {
+    setGeocoding(true);
+    let done = 0;
+    try {
+      while (true) {
+        const res = await fetch('/api/market-data', {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+          body: JSON.stringify({ action: 'geocode_batch', limit: 25 }),
+        });
+        const j = await res.json();
+        if (!j.ok) break;
+        done += j.processed;
+        setGeoProgress({ done, remaining: j.remaining });
+        if (j.remaining <= 0 || j.processed === 0) break;
+      }
+    } catch {}
+    setGeocoding(false);
+    if (searched) runSearch(); // refresh so newly-geocoded rows get their coordinates
+  };
+
   return (
     <div className="m-search">
       <div className="m-toggle">
@@ -268,7 +295,30 @@ function SearchTab({ token }) {
 
       {searched && (
         <div className="m-resultswrap">
-          <div className="m-resultcount">{rows.length} result{rows.length === 1 ? '' : 's'}</div>
+          <div className="m-resultbar">
+            <div className="m-resultcount">{rows.length} result{rows.length === 1 ? '' : 's'}</div>
+            <div className="m-viewtoggle">
+              <button className={'m-viewbtn' + (view === 'table' ? ' on' : '')} onClick={() => setView('table')}>Table</button>
+              <button className={'m-viewbtn' + (view === 'map' ? ' on' : '')} onClick={() => setView('map')}>Map</button>
+            </div>
+          </div>
+
+          {view === 'map' && (
+            <div className="m-geocodebar">
+              {geocoding ? (
+                <span>Geocoding… {geoProgress ? `${geoProgress.done} done, ${geoProgress.remaining} left` : ''}</span>
+              ) : (
+                <>
+                  <span>Addresses without map coordinates won't show as pins.</span>
+                  <button className="m-geocodebtn" onClick={runGeocodeBackfill}>Geocode all addresses</button>
+                </>
+              )}
+            </div>
+          )}
+
+          {view === 'map' ? (
+            <MarketMap rows={sortedRows} mode={mode} isStarred={isStarred} onMarkerClick={openTimeline} />
+          ) : (
           <div className="m-tablewrap">
             <table className="m-table">
               <thead>
@@ -324,6 +374,7 @@ function SearchTab({ token }) {
               </tbody>
             </table>
           </div>
+          )}
         </div>
       )}
 
@@ -376,6 +427,106 @@ function SearchTab({ token }) {
   );
 }
 
+// ---- Google Map with status-colored pins ----
+function MarketMap({ rows, mode, isStarred, onMarkerClick }) {
+  const ref = useRef(null);
+  const [status, setStatus] = useState('loading'); // loading | ok | nocoords | noauth
+
+  const pts = rows.filter((r) => r.lat && r.lng);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!MAPS_KEY) { setStatus('noauth'); return; }
+    if (!pts.length) { setStatus('nocoords'); return; }
+
+    let cancelled = false;
+    window.gm_authFailure = () => { if (!cancelled) setStatus('noauth'); };
+
+    // Same official async bootstrap as the Comps map (app/comps/[slug]/page.js) —
+    // loads google.maps.importLibrary once, reused if this script tag already exists.
+    const ensureLoader = () => new Promise((resolve, reject) => {
+      if (window.google && window.google.maps && window.google.maps.importLibrary) { resolve(); return; }
+      const existing = document.getElementById('gmaps-js');
+      if (existing) { existing.addEventListener('load', () => resolve()); existing.addEventListener('error', reject); return; }
+      (function (g) {
+        var h, a, k, p = 'The Google Maps JavaScript API', c = 'google', l = 'importLibrary', q = '__ib__', m = document, b = window;
+        b = b[c] || (b[c] = {});
+        var d = b.maps || (b.maps = {}), r = new Set(), e = new URLSearchParams(), u = function () {
+          return h || (h = new Promise(function (f, n) {
+            a = m.createElement('script'); a.id = 'gmaps-js';
+            e.set('libraries', [...r] + '');
+            e.set('key', MAPS_KEY);
+            a.src = 'https://maps.' + c + 'apis.com/maps/api/js?' + e;
+            a.onerror = function () { n(Error(p + ' could not load.')); };
+            a.onload = function () { f(); };
+            m.head.append(a);
+          }));
+        };
+        d[l] ? 0 : d[l] = function (f) { for (var _ = arguments.length, n = new Array(_ > 1 ? _ - 1 : 0), x = 1; x < _; x++) n[x - 1] = arguments[x]; return r.add(f) && u().then(function () { return d[l].apply(d, [f, ...n]); }); };
+      })({});
+      const check = setInterval(() => { if (window.google && window.google.maps && window.google.maps.importLibrary) { clearInterval(check); resolve(); } }, 50);
+      setTimeout(() => { clearInterval(check); if (!(window.google && window.google.maps && window.google.maps.importLibrary)) reject(Error('timeout')); }, 8000);
+    });
+
+    (async () => {
+      try {
+        await ensureLoader();
+        const { Map, InfoWindow } = await window.google.maps.importLibrary('maps');
+        const { Marker } = await window.google.maps.importLibrary('marker');
+        if (cancelled || !ref.current) return;
+        const g = window.google.maps;
+        const map = new Map(ref.current, {
+          mapTypeId: 'roadmap', mapTypeControl: true, streetViewControl: false, fullscreenControl: true,
+        });
+        const bounds = new g.LatLngBounds();
+        const info = new InfoWindow();
+        pts.forEach((r) => {
+          const pos = { lat: Number(r.lat), lng: Number(r.lng) };
+          bounds.extend(pos);
+          const rowStatus = mode === 'prospects' ? r.last_status : r.status_normalized;
+          const color = STATUS_COLOR[rowStatus] || '#6a7a82';
+          const starred = isStarred(r);
+          const marker = new Marker({
+            position: pos, map, title: r.address,
+            icon: { path: g.SymbolPath.CIRCLE, scale: starred ? 11 : 8, fillColor: starred ? GOLD : color, fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 },
+          });
+          // Hover shows a quick preview; click opens the full history modal
+          // (same action a table row's click does).
+          marker.addListener('mouseover', () => {
+            const price = fmtMoney(mode === 'prospects' ? r.last_list_price : r.orig_list_price);
+            info.setContent(
+              '<div style="font-family:Jost,sans-serif;max-width:220px;color:#1c2b33">' +
+              '<div style="font-weight:700;font-size:15px">' + (r.address || '') + '</div>' +
+              '<div style="font-size:14px;font-weight:600;margin:2px 0 4px">' + price + '</div>' +
+              '<div style="font-size:12px;color:#6a7a82">' + [rowStatus, r.subdivision || r.neighborhood].filter(Boolean).join(' · ') + '</div>' +
+              (r.tag ? '<div style="font-size:11.5px;color:#296190;margin-top:4px">#' + r.tag + '</div>' : '') +
+              '</div>'
+            );
+            info.open(map, marker);
+          });
+          marker.addListener('click', () => onMarkerClick(r.group_key));
+        });
+        map.fitBounds(bounds, 60);
+        g.event.addListenerOnce(map, 'idle', () => { if (pts.length === 1) map.setZoom(15); });
+        if (!cancelled) setStatus('ok');
+      } catch (e) {
+        console.error('market map load error', e);
+        if (!cancelled) setStatus('noauth');
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [rows, mode]);
+
+  return (
+    <div className="m-mapwrap">
+      <div ref={ref} className="m-map" style={{ display: status === 'ok' || status === 'loading' ? 'block' : 'none' }} />
+      {status === 'nocoords' && <div className="m-mapmsg">None of these results have map coordinates yet. Click "Geocode all addresses" above.</div>}
+      {status === 'noauth' && <div className="m-mapmsg">The map could not load — check the Google Maps key and billing.</div>}
+    </div>
+  );
+}
+
 const css = `
   .m-wrap { max-width: 1300px; margin: 0 auto; padding: 24px 18px 60px; font-family: 'Jost',system-ui,sans-serif; color: #1c2b33; }
   .m-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; flex-wrap: wrap; gap: 10px; }
@@ -408,7 +559,16 @@ const css = `
   .m-searchbtn:disabled { opacity: .6; cursor: default; }
   .m-exportbtn { padding: 9px 16px; background: #1c5b34; color: #fff; border: 0; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13.5px; font-weight: 600; cursor: pointer; }
 
-  .m-resultcount { font-size: 13px; color: #6a7a82; margin-bottom: 8px; }
+  .m-resultbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .m-resultcount { font-size: 13px; color: #6a7a82; }
+  .m-viewtoggle { display: flex; gap: 4px; background: #eef1f3; border-radius: 8px; padding: 3px; }
+  .m-viewbtn { padding: 6px 14px; border: 0; background: none; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 12.5px; font-weight: 600; color: #6a7a82; cursor: pointer; }
+  .m-viewbtn.on { background: #fff; color: #296190; box-shadow: 0 1px 3px rgba(20,40,60,.12); }
+  .m-geocodebar { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: #fdf3da; border: 1px solid #f0e2b8; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px; color: #6a5215; }
+  .m-geocodebtn { padding: 7px 14px; background: #296190; color: #fff; border: 0; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .m-mapwrap { border: 1px solid #e6e9ec; border-radius: 8px; overflow: hidden; background: #fff; }
+  .m-map { width: 100%; height: 520px; }
+  .m-mapmsg { padding: 40px 20px; text-align: center; color: #6a7a82; font-size: 13.5px; }
   .m-tablewrap { overflow-x: auto; border: 1px solid #e6e9ec; border-radius: 8px; background: #fff; box-shadow: 0 4px 16px rgba(20,40,60,.04); }
   .m-table { border-collapse: collapse; width: 100%; font-size: 13px; }
   .m-table th { background: #eef2f5; text-align: left; padding: 11px 12px; font-size: 11.5px; font-weight: 700; color: #3a4a52; text-transform: uppercase; letter-spacing: .03em; border-bottom: 1px solid #dde3e7; white-space: nowrap; position: sticky; top: 0; z-index: 1; }
