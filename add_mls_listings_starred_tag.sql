@@ -8,8 +8,13 @@ alter table public.mls_listings add column if not exists tag text;
 create index if not exists mls_listings_starred_idx on public.mls_listings (starred);
 create index if not exists mls_listings_tag_idx      on public.mls_listings (tag);
 
--- Same view as add_mls_listings.sql, just with latest.id/starred/tag added to the select list.
-create or replace view public.mls_prospects as
+-- Same view as add_mls_listings.sql, just with latest.id/starred/tag added to the select
+-- list. Dropped and recreated rather than CREATE OR REPLACE, because Postgres only lets
+-- REPLACE append new columns at the end — it can't insert one in the middle of the list,
+-- which is what adding last_id before the existing last_mls_number would do. A view holds
+-- no data, so dropping and recreating it is safe.
+drop view if exists public.mls_prospects;
+create view public.mls_prospects as
 with scored as (
   select
     l.*,

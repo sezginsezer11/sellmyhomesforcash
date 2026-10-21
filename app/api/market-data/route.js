@@ -48,16 +48,23 @@ export async function POST(request) {
 
     // Look up existing rows for this batch's MLS #s so we can report insert vs
     // update vs no-change — the actual write below is one batched upsert either way.
+    // A single .in() filter breaks once the list gets into the ~1500-1800 range
+    // (the request itself fails), so chunk it for large uploads.
     const mlsNumbers = rows.map((r) => r.mls_number);
-    const { data: existing, error: fetchErr } = await supabaseAdmin
-      .from('mls_listings')
-      .select(['mls_number', ...DIFF_FIELDS].join(','))
-      .in('mls_number', mlsNumbers);
-    if (fetchErr) {
-      console.error('market-data fetch-existing error:', fetchErr);
-      return NextResponse.json({ ok: false, error: 'Could not read existing rows.' }, { status: 500 });
+    const CHUNK = 500;
+    const existingByMls = new Map();
+    for (let i = 0; i < mlsNumbers.length; i += CHUNK) {
+      const chunk = mlsNumbers.slice(i, i + CHUNK);
+      const { data: existing, error: fetchErr } = await supabaseAdmin
+        .from('mls_listings')
+        .select(['mls_number', ...DIFF_FIELDS].join(','))
+        .in('mls_number', chunk);
+      if (fetchErr) {
+        console.error('market-data fetch-existing error:', fetchErr);
+        return NextResponse.json({ ok: false, error: 'Could not read existing rows.' }, { status: 500 });
+      }
+      for (const r of existing || []) existingByMls.set(r.mls_number, r);
     }
-    const existingByMls = new Map((existing || []).map((r) => [r.mls_number, r]));
 
     let inserted = 0, updated = 0, skipped = skippedNoMlsNumber, flagged = 0;
     for (const row of rows) {
