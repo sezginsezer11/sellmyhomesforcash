@@ -23,6 +23,24 @@ const DIFF_FIELDS = [
   'off_market_date', 'close_date', 'listing_contract_date', 'days_on_market',
 ];
 
+// This Supabase project enforces a hard 1000-row cap per request regardless of
+// .limit() — confirmed directly against production data. buildQuery must return
+// a FRESH query (with filters/order already applied, no .range()) each call,
+// since a query builder can't be reused across requests.
+async function fetchAllPaginated(buildQuery, cap = 20000) {
+  const pageSize = 1000;
+  let all = [];
+  let from = 0;
+  while (all.length < cap) {
+    const { data, error } = await buildQuery().range(from, from + pageSize - 1);
+    if (error) return { data: null, error };
+    all = all.concat(data || []);
+    if (!data || data.length < pageSize) break;
+    from += pageSize;
+  }
+  return { data: all, error: null };
+}
+
 // POST — admin uploads a CSV export.
 export async function POST(request) {
   try {
@@ -184,7 +202,7 @@ export async function GET(request) {
       // lat/lng were added in a later migration — if it hasn't been run yet on this
       // database, selecting them by name 400s the whole query (PostgREST error
       // 42703). Fall back to the same search without them rather than show nothing.
-      const runProspectsQuery = (fields) => {
+      const buildProspectsQuery = (fields) => () => {
         let q = supabaseAdmin.from('mls_prospects').select(fields.join(','));
         if (community) q = q.or(`subdivision.ilike.%${escLike(community)}%,neighborhood.ilike.%${escLike(community)}%,mls_area.ilike.%${escLike(community)}%`);
         if (address) q = q.ilike('address', `%${escLike(address)}%`);
@@ -195,34 +213,37 @@ export async function GET(request) {
         if (priceMax) q = q.lte('last_list_price', Number(priceMax));
         if (beds) q = q.gte('beds_total', Number(beds));
         if (subType) q = q.ilike('property_sub_type', `%${escLike(subType)}%`);
-        return q.order('last_off_market_date', { ascending: false }).limit(20000);
+        return q.order('last_off_market_date', { ascending: false });
       };
 
-      let { data, error } = await runProspectsQuery(SEARCH_FIELDS_PROSPECTS);
+      let { data, error } = await fetchAllPaginated(buildProspectsQuery(SEARCH_FIELDS_PROSPECTS));
       if (error && error.code === '42703') {
-        ({ data, error } = await runProspectsQuery(SEARCH_FIELDS_PROSPECTS.filter((f) => f !== 'lat' && f !== 'lng')));
+        ({ data, error } = await fetchAllPaginated(buildProspectsQuery(SEARCH_FIELDS_PROSPECTS.filter((f) => f !== 'lat' && f !== 'lng'))));
       }
       if (error) { console.error(error); return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 }); }
       return NextResponse.json({ ok: true, rows: data || [], mode: 'prospects' });
     }
 
     // All history — every listing episode, not deduped by APN.
-    let q = supabaseAdmin.from('mls_listings').select('*');
-    if (community) q = q.or(`subdivision.ilike.%${escLike(community)}%,neighborhood.ilike.%${escLike(community)}%,mls_area.ilike.%${escLike(community)}%`);
-    if (address) q = q.ilike('address', `%${escLike(address)}%`);
-    if (status !== 'all') q = q.eq('status_normalized', status);
-    if (offFrom) q = q.gte('off_market_date', offFrom);
-    if (offTo) q = q.lte('off_market_date', offTo);
-    if (priceMin) q = q.gte('orig_list_price', Number(priceMin));
-    if (priceMax) q = q.lte('orig_list_price', Number(priceMax));
-    if (beds) q = q.gte('beds_total', Number(beds));
-    if (subType) q = q.ilike('property_sub_type', `%${escLike(subType)}%`);
-    const { data, error } = await q.order('uploaded_at', { ascending: false }).limit(20000);
+    const buildAllHistoryQuery = () => {
+      let q = supabaseAdmin.from('mls_listings').select('*');
+      if (community) q = q.or(`subdivision.ilike.%${escLike(community)}%,neighborhood.ilike.%${escLike(community)}%,mls_area.ilike.%${escLike(community)}%`);
+      if (address) q = q.ilike('address', `%${escLike(address)}%`);
+      if (status !== 'all') q = q.eq('status_normalized', status);
+      if (offFrom) q = q.gte('off_market_date', offFrom);
+      if (offTo) q = q.lte('off_market_date', offTo);
+      if (priceMin) q = q.gte('orig_list_price', Number(priceMin));
+      if (priceMax) q = q.lte('orig_list_price', Number(priceMax));
+      if (beds) q = q.gte('beds_total', Number(beds));
+      if (subType) q = q.ilike('property_sub_type', `%${escLike(subType)}%`);
+      return q.order('uploaded_at', { ascending: false });
+    };
+    const { data, error } = await fetchAllPaginated(buildAllHistoryQuery);
     if (error) { console.error(error); return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 }); }
 
     // Mark rows that are currently the live prospect for their group, so "All
     // history" can visually flag them even though every row there isn't one.
-    const { data: prospectMls } = await supabaseAdmin.from('mls_prospects').select('last_mls_number');
+    const { data: prospectMls } = await fetchAllPaginated(() => supabaseAdmin.from('mls_prospects').select('last_mls_number'));
     const prospectSet = new Set((prospectMls || []).map((p) => p.last_mls_number));
     const rows = (data || []).map((r) => ({ ...r, is_current_prospect: prospectSet.has(r.mls_number) }));
 
