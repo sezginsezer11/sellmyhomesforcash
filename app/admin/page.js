@@ -171,12 +171,16 @@ export default function AdminPage() {
         <h1>Leads <span className="a-count">{view.length}</span></h1>
         <div className="a-head-right">
           <a className="a-tool" href="/admin/comps">Comps</a>
-          <a className="a-tool" href="/admin/market-data">Market Data</a>
           <a className="a-tool" href="/fix-and-flip-calculator" target="_blank" rel="noopener">Fix &amp; Flip Calculator ↗</a>
           <span className="a-me">{session.user.email}</span>
           <button className="a-logout" onClick={logout}>Sign out</button>
         </div>
       </div>
+
+      <a className="a-marketdata-cta" href="/admin/market-data">
+        <span>📊 Market Data — expired / canceled / withdrawn prospecting</span>
+        <span className="a-marketdata-arrow">→</span>
+      </a>
 
       <div className="a-controls">
         <input className="a-search" placeholder="Search name, address, phone, email…" value={q} onChange={e=>setQ(e.target.value)} />
@@ -330,6 +334,10 @@ const css = `
   .a-count { font-family: 'Jost',sans-serif; font-size: 14px; background: #eef1f3; color: #4a5a62; padding: 2px 10px; border-radius: 12px; vertical-align: middle; margin-left: 6px; }
   .a-me { font-size: 13px; color: #6a7a82; }
   .a-logout { background: none; border: 1px solid #d5dbdf; border-radius: 6px; padding: 8px 14px; cursor: pointer; font-family: 'Jost',sans-serif; }
+  .a-marketdata-cta { display: flex; align-items: center; justify-content: space-between; background: #296190; color: #fff; text-decoration: none; padding: 14px 18px; border-radius: 10px; font-family: 'Jost',sans-serif; font-size: 14.5px; font-weight: 600; margin-bottom: 18px; box-shadow: 0 6px 18px rgba(41,97,144,.25); }
+  .a-marketdata-cta:hover { background: #21506f; }
+  .a-marketdata-arrow { font-size: 18px; transition: transform .15s; }
+  .a-marketdata-cta:hover .a-marketdata-arrow { transform: translateX(4px); }
   .a-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
   .a-controls input, .a-controls select { padding: 9px 11px; border: 1px solid #d5dbdf; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 14px; background: #fff; }
   .a-search { flex: 1; min-width: 220px; }

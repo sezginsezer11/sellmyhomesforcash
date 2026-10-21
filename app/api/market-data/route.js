@@ -116,6 +116,7 @@ export async function GET(request) {
 
     const prospectsOnly = url.searchParams.get('prospects_only') !== '0'; // default true
     const community = (url.searchParams.get('community') || '').trim();
+    const address = (url.searchParams.get('address') || '').trim();
     const status = (url.searchParams.get('status') || 'all').trim();
     const offFrom = url.searchParams.get('off_from') || '';
     const offTo = url.searchParams.get('off_to') || '';
@@ -123,17 +124,21 @@ export async function GET(request) {
     const priceMax = url.searchParams.get('price_max') || '';
     const beds = url.searchParams.get('beds') || '';
     const subType = (url.searchParams.get('sub_type') || '').trim();
+    // Strip characters that are special in PostgREST's .or() mini-syntax so a
+    // comma/paren in a search box can't break or smuggle extra filter clauses.
+    const escLike = (s) => s.replace(/[,()]/g, '');
 
     if (prospectsOnly) {
       let q = supabaseAdmin.from('mls_prospects').select(SEARCH_FIELDS_PROSPECTS.join(','));
-      if (community) q = q.or(`subdivision.ilike.%${community}%,neighborhood.ilike.%${community}%,mls_area.ilike.%${community}%`);
+      if (community) q = q.or(`subdivision.ilike.%${escLike(community)}%,neighborhood.ilike.%${escLike(community)}%,mls_area.ilike.%${escLike(community)}%`);
+      if (address) q = q.ilike('address', `%${escLike(address)}%`);
       if (status !== 'all') q = q.eq('last_status', status);
       if (offFrom) q = q.gte('last_off_market_date', offFrom);
       if (offTo) q = q.lte('last_off_market_date', offTo);
       if (priceMin) q = q.gte('last_list_price', Number(priceMin));
       if (priceMax) q = q.lte('last_list_price', Number(priceMax));
       if (beds) q = q.gte('beds_total', Number(beds));
-      if (subType) q = q.ilike('property_sub_type', `%${subType}%`);
+      if (subType) q = q.ilike('property_sub_type', `%${escLike(subType)}%`);
       const { data, error } = await q.order('last_off_market_date', { ascending: false }).limit(500);
       if (error) { console.error(error); return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 }); }
       return NextResponse.json({ ok: true, rows: data || [], mode: 'prospects' });
@@ -141,14 +146,15 @@ export async function GET(request) {
 
     // All history — every listing episode, not deduped by APN.
     let q = supabaseAdmin.from('mls_listings').select('*');
-    if (community) q = q.or(`subdivision.ilike.%${community}%,neighborhood.ilike.%${community}%,mls_area.ilike.%${community}%`);
+    if (community) q = q.or(`subdivision.ilike.%${escLike(community)}%,neighborhood.ilike.%${escLike(community)}%,mls_area.ilike.%${escLike(community)}%`);
+    if (address) q = q.ilike('address', `%${escLike(address)}%`);
     if (status !== 'all') q = q.eq('status_normalized', status);
     if (offFrom) q = q.gte('off_market_date', offFrom);
     if (offTo) q = q.lte('off_market_date', offTo);
     if (priceMin) q = q.gte('orig_list_price', Number(priceMin));
     if (priceMax) q = q.lte('orig_list_price', Number(priceMax));
     if (beds) q = q.gte('beds_total', Number(beds));
-    if (subType) q = q.ilike('property_sub_type', `%${subType}%`);
+    if (subType) q = q.ilike('property_sub_type', `%${escLike(subType)}%`);
     const { data, error } = await q.order('uploaded_at', { ascending: false }).limit(500);
     if (error) { console.error(error); return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 }); }
     return NextResponse.json({ ok: true, rows: data || [], mode: 'all' });

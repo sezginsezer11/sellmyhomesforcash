@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { supabaseBrowser } from '../../../lib/supabase-browser';
 
 const STATUSES = ['expired', 'canceled', 'withdrawn'];
@@ -126,6 +126,7 @@ function UploadTab({ token }) {
 function SearchTab({ token }) {
   const [prospectsOnly, setProspectsOnly] = useState(true);
   const [community, setCommunity] = useState('');
+  const [address, setAddress] = useState('');
   const [status, setStatus] = useState('all');
   const [offFrom, setOffFrom] = useState('');
   const [offTo, setOffTo] = useState('');
@@ -137,6 +138,7 @@ function SearchTab({ token }) {
   const [mode, setMode] = useState('prospects');
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
+  const [sort, setSort] = useState({ key: null, dir: 1 });
   const [timelineKey, setTimelineKey] = useState('');
   const [timeline, setTimeline] = useState([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
@@ -145,7 +147,7 @@ function SearchTab({ token }) {
     setLoading(true); setSearched(true);
     const params = new URLSearchParams({
       prospects_only: prospectsOnly ? '1' : '0',
-      status, community, off_from: offFrom, off_to: offTo,
+      status, community, address, off_from: offFrom, off_to: offTo,
       price_min: priceMin, price_max: priceMax, beds, sub_type: subType,
     });
     try {
@@ -165,6 +167,36 @@ function SearchTab({ token }) {
     } catch {}
     setTimelineLoading(false);
   };
+
+  // Every episode in a timeline shares the same property, so the first row
+  // (oldest, per the API's ordering) identifies it for the modal header.
+  const timelineProperty = timeline[0];
+
+  const sortKeyVal = (r, key) => {
+    switch (key) {
+      case 'address': return (r.address || '').toLowerCase();
+      case 'community': return (r.subdivision || r.neighborhood || r.mls_area || '').toLowerCase();
+      case 'status': return mode === 'prospects' ? (r.last_status || '') : (r.status_normalized || '');
+      case 'price': return (mode === 'prospects' ? r.last_list_price : r.orig_list_price) ?? -1;
+      case 'off_market': return (mode === 'prospects' ? r.last_off_market_date : r.off_market_date) || '';
+      case 'times_listed': return mode === 'prospects' ? (r.times_listed_without_selling ?? -1) : -1;
+      case 'sqft': return r.living_area ?? -1;
+      default: return 0;
+    }
+  };
+  const toggleSort = (key) => setSort((s) => (s.key === key ? { key, dir: -s.dir } : { key, dir: 1 }));
+  const sortArrow = (key) => (sort.key === key ? (sort.dir === 1 ? ' ▴' : ' ▾') : '');
+  const sortedRows = useMemo(() => {
+    if (!sort.key) return rows;
+    const arr = rows.slice();
+    arr.sort((a, b) => {
+      const va = sortKeyVal(a, sort.key), vb = sortKeyVal(b, sort.key);
+      if (va < vb) return -1 * sort.dir;
+      if (va > vb) return 1 * sort.dir;
+      return 0;
+    });
+    return arr;
+  }, [rows, sort, mode]);
 
   const exportCSV = () => {
     const cols = mode === 'prospects'
@@ -187,6 +219,7 @@ function SearchTab({ token }) {
       </div>
 
       <div className="m-filters">
+        <input placeholder="Address…" value={address} onChange={(e) => setAddress(e.target.value)} />
         <input placeholder="Community (subdivision, neighborhood, or area)…" value={community} onChange={(e) => setCommunity(e.target.value)} />
         <select value={status} onChange={(e) => setStatus(e.target.value)}>
           <option value="all">All statuses</option>
@@ -210,13 +243,18 @@ function SearchTab({ token }) {
             <table className="m-table">
               <thead>
                 <tr>
-                  <th>Address</th><th>Community</th><th>Status</th><th className="m-r">List Price</th>
-                  <th>Off-Market</th><th className="m-r">Times Listed</th><th>Beds/Baths/SqFt</th>
+                  <th className="m-sortable" onClick={() => toggleSort('address')}>Address{sortArrow('address')}</th>
+                  <th className="m-sortable" onClick={() => toggleSort('community')}>Community{sortArrow('community')}</th>
+                  <th className="m-sortable" onClick={() => toggleSort('status')}>Status{sortArrow('status')}</th>
+                  <th className="m-r m-sortable" onClick={() => toggleSort('price')}>List Price{sortArrow('price')}</th>
+                  <th className="m-sortable" onClick={() => toggleSort('off_market')}>Off-Market{sortArrow('off_market')}</th>
+                  <th className="m-r m-sortable" onClick={() => toggleSort('times_listed')}>Times Listed{sortArrow('times_listed')}</th>
+                  <th className="m-sortable" onClick={() => toggleSort('sqft')} title="Sorts by square footage">Beds/Baths/SqFt{sortArrow('sqft')}</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.length === 0 && <tr><td colSpan={7} className="m-empty">No matches.</td></tr>}
-                {mode === 'prospects' ? rows.map((r) => (
+                {mode === 'prospects' ? sortedRows.map((r) => (
                   <tr key={r.group_key} onClick={() => openTimeline(r.group_key)} className="m-clickrow">
                     <td className="m-addr">{r.address}{r.flagged && <span className="m-flag" title="No APN — matched by address">⚑</span>}</td>
                     <td>{r.subdivision || r.neighborhood || r.mls_area || '—'}</td>
@@ -226,7 +264,7 @@ function SearchTab({ token }) {
                     <td className="m-r">{r.times_listed_without_selling}</td>
                     <td>{r.beds_total || '—'}/{r.baths_total || '—'}/{r.living_area ? Number(r.living_area).toLocaleString() : '—'}</td>
                   </tr>
-                )) : rows.map((r) => (
+                )) : sortedRows.map((r) => (
                   <tr key={r.id} onClick={() => openTimeline(r.group_key)} className="m-clickrow">
                     <td className="m-addr">{r.address}{r.flagged && <span className="m-flag" title="No APN — matched by address">⚑</span>}</td>
                     <td>{r.subdivision || r.neighborhood || r.mls_area || '—'}</td>
@@ -250,6 +288,18 @@ function SearchTab({ token }) {
               <span>Listing history</span>
               <button className="m-modalclose" onClick={() => setTimelineKey('')}>✕</button>
             </div>
+            {timelineProperty && (
+              <div className="m-modalproperty">
+                <div className="m-modaladdr">{timelineProperty.address}</div>
+                <div className="m-modalsub">
+                  {[timelineProperty.subdivision || timelineProperty.neighborhood || timelineProperty.mls_area,
+                    timelineProperty.beds_total && `${timelineProperty.beds_total} bd`,
+                    timelineProperty.baths_total && `${timelineProperty.baths_total} ba`,
+                    timelineProperty.living_area && `${Number(timelineProperty.living_area).toLocaleString()} sqft`]
+                    .filter(Boolean).join(' · ')}
+                </div>
+              </div>
+            )}
             <div className="m-modalbody">
               {timelineLoading ? <p>Loading…</p> : timeline.length === 0 ? <p>No history found.</p> : (
                 <div className="m-timeline">
@@ -307,7 +357,7 @@ const css = `
   .m-togglebtn.on { background: #296190; border-color: #296190; color: #fff; }
   .m-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; align-items: center; }
   .m-filters input, .m-filters select { padding: 9px 11px; border: 1px solid #d5dbdf; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13.5px; background: #fff; }
-  .m-filters input[placeholder*="Community"] { flex: 1; min-width: 220px; }
+  .m-filters input[placeholder*="Address"], .m-filters input[placeholder*="Community"] { flex: 1; min-width: 180px; }
   .m-searchbtn { padding: 9px 18px; background: #296190; color: #fff; border: 0; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13.5px; font-weight: 600; cursor: pointer; }
   .m-searchbtn:disabled { opacity: .6; cursor: default; }
   .m-exportbtn { padding: 9px 16px; background: #1c5b34; color: #fff; border: 0; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13.5px; font-weight: 600; cursor: pointer; }
@@ -317,6 +367,8 @@ const css = `
   .m-table { border-collapse: collapse; width: 100%; font-size: 13px; }
   .m-table th { background: #f5f7f9; text-align: left; padding: 10px 12px; font-size: 11.5px; font-weight: 600; color: #4a5a62; text-transform: uppercase; letter-spacing: .03em; border-bottom: 1px solid #e6e9ec; white-space: nowrap; }
   .m-table th.m-r, .m-table td.m-r { text-align: right; }
+  .m-table th.m-sortable { cursor: pointer; user-select: none; }
+  .m-table th.m-sortable:hover { color: #296190; }
   .m-table td { border-bottom: 1px solid #f0f3f5; padding: 11px 12px; white-space: nowrap; }
   .m-clickrow { cursor: pointer; }
   .m-clickrow:hover { background: #f5f9fc; }
@@ -330,6 +382,9 @@ const css = `
   .m-modal { background: #fff; border-radius: 10px; width: 100%; max-width: 560px; max-height: 80vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.3); }
   .m-modalhead { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid #e6e9ec; font-weight: 600; }
   .m-modalclose { background: none; border: 0; cursor: pointer; font-size: 16px; color: #6a7a82; }
+  .m-modalproperty { padding: 12px 18px; background: #f5f9fc; border-bottom: 1px solid #e6e9ec; }
+  .m-modaladdr { font-weight: 700; font-size: 15px; color: #1c2b33; }
+  .m-modalsub { font-size: 12.5px; color: #6a7a82; margin-top: 2px; }
   .m-modalbody { padding: 16px 18px; overflow-y: auto; }
   .m-timeline { display: flex; flex-direction: column; gap: 12px; }
   .m-tlrow { display: flex; gap: 12px; padding-bottom: 12px; border-bottom: 1px solid #f0f3f5; }
