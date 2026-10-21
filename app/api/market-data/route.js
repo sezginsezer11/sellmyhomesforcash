@@ -181,17 +181,27 @@ export async function GET(request) {
     const escLike = (s) => s.replace(/[,()]/g, '');
 
     if (prospectsOnly) {
-      let q = supabaseAdmin.from('mls_prospects').select(SEARCH_FIELDS_PROSPECTS.join(','));
-      if (community) q = q.or(`subdivision.ilike.%${escLike(community)}%,neighborhood.ilike.%${escLike(community)}%,mls_area.ilike.%${escLike(community)}%`);
-      if (address) q = q.ilike('address', `%${escLike(address)}%`);
-      if (status !== 'all') q = q.eq('last_status', status);
-      if (offFrom) q = q.gte('last_off_market_date', offFrom);
-      if (offTo) q = q.lte('last_off_market_date', offTo);
-      if (priceMin) q = q.gte('last_list_price', Number(priceMin));
-      if (priceMax) q = q.lte('last_list_price', Number(priceMax));
-      if (beds) q = q.gte('beds_total', Number(beds));
-      if (subType) q = q.ilike('property_sub_type', `%${escLike(subType)}%`);
-      const { data, error } = await q.order('last_off_market_date', { ascending: false }).limit(20000);
+      // lat/lng were added in a later migration — if it hasn't been run yet on this
+      // database, selecting them by name 400s the whole query (PostgREST error
+      // 42703). Fall back to the same search without them rather than show nothing.
+      const runProspectsQuery = (fields) => {
+        let q = supabaseAdmin.from('mls_prospects').select(fields.join(','));
+        if (community) q = q.or(`subdivision.ilike.%${escLike(community)}%,neighborhood.ilike.%${escLike(community)}%,mls_area.ilike.%${escLike(community)}%`);
+        if (address) q = q.ilike('address', `%${escLike(address)}%`);
+        if (status !== 'all') q = q.eq('last_status', status);
+        if (offFrom) q = q.gte('last_off_market_date', offFrom);
+        if (offTo) q = q.lte('last_off_market_date', offTo);
+        if (priceMin) q = q.gte('last_list_price', Number(priceMin));
+        if (priceMax) q = q.lte('last_list_price', Number(priceMax));
+        if (beds) q = q.gte('beds_total', Number(beds));
+        if (subType) q = q.ilike('property_sub_type', `%${escLike(subType)}%`);
+        return q.order('last_off_market_date', { ascending: false }).limit(20000);
+      };
+
+      let { data, error } = await runProspectsQuery(SEARCH_FIELDS_PROSPECTS);
+      if (error && error.code === '42703') {
+        ({ data, error } = await runProspectsQuery(SEARCH_FIELDS_PROSPECTS.filter((f) => f !== 'lat' && f !== 'lng')));
+      }
       if (error) { console.error(error); return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 }); }
       return NextResponse.json({ ok: true, rows: data || [], mode: 'prospects' });
     }
