@@ -157,6 +157,8 @@ function SearchTab({ token }) {
   const [timeline, setTimeline] = useState([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [timelineIndex, setTimelineIndex] = useState(-1); // position within sortedRows, for Prev/Next
+  const [showDetails, setShowDetails] = useState(false);
+  const [addrCopied, setAddrCopied] = useState(false);
 
   const runSearch = async () => {
     setLoading(true); setSearched(true);
@@ -176,6 +178,7 @@ function SearchTab({ token }) {
   const openTimeline = async (groupKey, index) => {
     setTimelineKey(groupKey); setTimeline([]); setTimelineLoading(true);
     setTimelineIndex(index != null ? index : -1);
+    setShowDetails(false);
     try {
       const res = await fetch('/api/market-data?group_key=' + encodeURIComponent(groupKey), { headers: { Authorization: 'Bearer ' + token() } });
       const j = await res.json();
@@ -406,7 +409,14 @@ function SearchTab({ token }) {
             {timelineProperty && (
               <div className="m-modalproperty">
                 <div className="m-modaladdrrow">
-                  <div className="m-modaladdr">{timelineProperty.address}</div>
+                  <div className="m-modaladdrgroup">
+                    <div className="m-modaladdr">{timelineProperty.address}</div>
+                    <button className="m-inlinebtn" onClick={() => {
+                      navigator.clipboard?.writeText(timelineProperty.address || '');
+                      setAddrCopied(true); setTimeout(() => setAddrCopied(false), 1500);
+                    }}>{addrCopied ? 'Copied ✓' : 'Copy'}</button>
+                    <button className="m-inlinebtn" onClick={() => setShowDetails((d) => !d)}>{showDetails ? 'Hide details' : 'Details'}</button>
+                  </div>
                   {timelineProperty.address && (
                     <a className="m-mapsbtn" target="_blank" rel="noopener"
                       href={'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(timelineProperty.address)}>
@@ -421,6 +431,18 @@ function SearchTab({ token }) {
                     timelineProperty.living_area && `${Number(timelineProperty.living_area).toLocaleString()} sqft`]
                     .filter(Boolean).join(' · ')}
                 </div>
+                {showDetails && (
+                  <div className="m-detailsgrid">
+                    <div><span>APN</span><b>{timelineProperty.apn_normalized || '—'}</b></div>
+                    <div><span>Postal Code</span><b>{timelineProperty.postal_code || '—'}</b></div>
+                    <div><span>Subdivision</span><b>{timelineProperty.subdivision || '—'}</b></div>
+                    <div><span>Neighborhood</span><b>{timelineProperty.neighborhood || '—'}</b></div>
+                    <div><span>MLS Area</span><b>{timelineProperty.mls_area || '—'}</b></div>
+                    <div><span>Property Type</span><b>{timelineProperty.property_sub_type || '—'}</b></div>
+                    <div><span>Year Built</span><b>{timelineProperty.year_built || '—'}</b></div>
+                    <div><span>Lot Size</span><b>{timelineProperty.lot_size_sqft ? Number(timelineProperty.lot_size_sqft).toLocaleString() + ' sqft' : '—'}</b></div>
+                  </div>
+                )}
               </div>
             )}
             <div className="m-modalbody">
@@ -630,10 +652,16 @@ const css = `
   .m-navbtn:hover:not(:disabled) { border-color: #296190; color: #296190; }
   .m-navbtn:disabled { opacity: .35; cursor: default; }
   .m-modalproperty { padding: 12px 18px; background: #f5f9fc; border-bottom: 1px solid #e6e9ec; }
-  .m-modaladdrrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .m-modaladdrrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .m-modaladdrgroup { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .m-modaladdr { font-weight: 700; font-size: 15px; color: #1c2b33; }
+  .m-inlinebtn { background: none; border: 0; color: #b8341f; font-family: 'Jost',sans-serif; font-size: 12.5px; font-weight: 600; cursor: pointer; padding: 0; }
+  .m-inlinebtn:hover { text-decoration: underline; }
   .m-mapsbtn { font-size: 12.5px; font-weight: 600; color: #296190; text-decoration: none; white-space: nowrap; border: 1px solid #bcd2e4; border-radius: 6px; padding: 5px 10px; }
   .m-mapsbtn:hover { background: #eaf2fa; }
+  .m-detailsgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; margin-top: 12px; padding-top: 12px; border-top: 1px dashed #dde3e7; }
+  .m-detailsgrid div { display: flex; justify-content: space-between; font-size: 12.5px; padding: 3px 0; border-bottom: 1px solid #eef1f3; }
+  .m-detailsgrid span { color: #9aa4ab; } .m-detailsgrid b { color: #1c2b33; font-weight: 600; }
   .m-modalsub { font-size: 12.5px; color: #6a7a82; margin-top: 2px; }
   .m-modalbody { padding: 16px 18px; overflow-y: auto; }
   .m-timeline { display: flex; flex-direction: column; gap: 12px; }
