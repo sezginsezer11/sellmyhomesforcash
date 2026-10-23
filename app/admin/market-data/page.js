@@ -13,6 +13,15 @@ const STATUS_COLOR = {
 const MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY;
 const GOLD = '#e0a800';
 
+// Zillow resolves straight to the exact listing page when the URL includes
+// city + state (confirmed directly — without them it lands on a generic search
+// page instead). This dataset is entirely Carmel Valley / San Diego.
+const zillowUrl = (address, postalCode) => {
+  const slug = (address || '').replace(/[^a-zA-Z0-9\s]/g, '').trim().split(/\s+/).join('-');
+  if (!slug) return null;
+  return `https://www.zillow.com/homes/${slug}-San-Diego-CA-${(postalCode || '').toString().trim()}_rb/`;
+};
+
 export default function MarketDataPage() {
   const [session, setSession] = useState(null);
   const [checking, setChecking] = useState(true);
@@ -672,12 +681,20 @@ function SearchTab({ token }) {
                     }}>{addrCopied ? 'Copied ✓' : 'Copy'}</button>
                     <button className="m-inlinebtn" onClick={() => setShowDetails((d) => !d)}>{showDetails ? 'Hide details' : 'Details'}</button>
                   </div>
-                  {timelineProperty.address && (
-                    <a className="m-mapsbtn" target="_blank" rel="noopener"
-                      href={'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(timelineProperty.address)}>
-                      📍 Google Maps
-                    </a>
-                  )}
+                  <div className="m-modallinks">
+                    {timelineProperty.address && (
+                      <a className="m-mapsbtn" target="_blank" rel="noopener"
+                        href={'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(timelineProperty.address)}>
+                        📍 Google Maps
+                      </a>
+                    )}
+                    {zillowUrl(timelineProperty.address, timelineProperty.postal_code) && (
+                      <a className="m-mapsbtn" target="_blank" rel="noopener"
+                        href={zillowUrl(timelineProperty.address, timelineProperty.postal_code)}>
+                        🏠 Zillow
+                      </a>
+                    )}
+                  </div>
                 </div>
                 <div className="m-modalsub">
                   {[timelineProperty.subdivision || timelineProperty.neighborhood || timelineProperty.mls_area,
@@ -965,6 +982,7 @@ const css = `
   .m-modaladdr { font-weight: 700; font-size: 15px; color: #1c2b33; }
   .m-inlinebtn { background: none; border: 0; color: #b8341f; font-family: 'Jost',sans-serif; font-size: 12.5px; font-weight: 600; cursor: pointer; padding: 0; }
   .m-inlinebtn:hover { text-decoration: underline; }
+  .m-modallinks { display: flex; gap: 8px; }
   .m-mapsbtn { font-size: 12.5px; font-weight: 600; color: #296190; text-decoration: none; white-space: nowrap; border: 1px solid #bcd2e4; border-radius: 6px; padding: 5px 10px; }
   .m-mapsbtn:hover { background: #eaf2fa; }
   .m-detailsgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; margin-top: 12px; padding-top: 12px; border-top: 1px dashed #dde3e7; }
