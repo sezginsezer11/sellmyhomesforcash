@@ -192,6 +192,8 @@ export async function GET(request) {
     const offTo = url.searchParams.get('off_to') || '';
     const priceMin = url.searchParams.get('price_min') || '';
     const priceMax = url.searchParams.get('price_max') || '';
+    const sqftMin = url.searchParams.get('sqft_min') || '';
+    const sqftMax = url.searchParams.get('sqft_max') || '';
     const beds = url.searchParams.get('beds') || '';
     const subType = (url.searchParams.get('sub_type') || '').trim();
     // Strip characters that are special in PostgREST's .or() mini-syntax so a
@@ -211,6 +213,8 @@ export async function GET(request) {
         if (offTo) q = q.lte('last_off_market_date', offTo);
         if (priceMin) q = q.gte('last_list_price', Number(priceMin));
         if (priceMax) q = q.lte('last_list_price', Number(priceMax));
+        if (sqftMin) q = q.gte('living_area', Number(sqftMin));
+        if (sqftMax) q = q.lte('living_area', Number(sqftMax));
         if (beds) q = q.gte('beds_total', Number(beds));
         if (subType) q = q.ilike('property_sub_type', `%${escLike(subType)}%`);
         return q.order('last_off_market_date', { ascending: false });
@@ -234,6 +238,8 @@ export async function GET(request) {
       if (offTo) q = q.lte('off_market_date', offTo);
       if (priceMin) q = q.gte('orig_list_price', Number(priceMin));
       if (priceMax) q = q.lte('orig_list_price', Number(priceMax));
+      if (sqftMin) q = q.gte('living_area', Number(sqftMin));
+      if (sqftMax) q = q.lte('living_area', Number(sqftMax));
       if (beds) q = q.gte('beds_total', Number(beds));
       if (subType) q = q.ilike('property_sub_type', `%${escLike(subType)}%`);
       return q.order('uploaded_at', { ascending: false });

@@ -143,6 +143,8 @@ function SearchTab({ token }) {
   const [offTo, setOffTo] = useState('');
   const [priceMin, setPriceMin] = useState('');
   const [priceMax, setPriceMax] = useState('');
+  const [sqftMin, setSqftMin] = useState('');
+  const [sqftMax, setSqftMax] = useState('');
   const [beds, setBeds] = useState('');
   const [subType, setSubType] = useState('');
   const [rows, setRows] = useState([]);
@@ -165,7 +167,8 @@ function SearchTab({ token }) {
     const params = new URLSearchParams({
       prospects_only: prospectsOnly ? '1' : '0',
       status, community, address, off_from: offFrom, off_to: offTo,
-      price_min: priceMin, price_max: priceMax, beds, sub_type: subType,
+      price_min: priceMin, price_max: priceMax, sqft_min: sqftMin, sqft_max: sqftMax,
+      beds, sub_type: subType,
     });
     try {
       const res = await fetch('/api/market-data?' + params.toString(), { headers: { Authorization: 'Bearer ' + token() } });
@@ -304,6 +307,8 @@ function SearchTab({ token }) {
         <input type="date" value={offTo} onChange={(e) => setOffTo(e.target.value)} title="Off-market to" />
         <input type="number" placeholder="Min price" value={priceMin} onChange={(e) => setPriceMin(e.target.value)} />
         <input type="number" placeholder="Max price" value={priceMax} onChange={(e) => setPriceMax(e.target.value)} />
+        <input type="number" placeholder="Min sqft" value={sqftMin} onChange={(e) => setSqftMin(e.target.value)} />
+        <input type="number" placeholder="Max sqft" value={sqftMax} onChange={(e) => setSqftMax(e.target.value)} />
         <input type="number" placeholder="Beds (min)" value={beds} onChange={(e) => setBeds(e.target.value)} />
         <input placeholder="Property sub type…" value={subType} onChange={(e) => setSubType(e.target.value)} />
         <button className="m-searchbtn" onClick={runSearch} disabled={loading}>{loading ? 'Searching…' : 'Search'}</button>
