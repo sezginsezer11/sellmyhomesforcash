@@ -92,6 +92,51 @@ export async function POST(request) {
       return NextResponse.json({ ok: true, geocoded, failed, processed: seen.size, remaining: remaining || 0 });
     }
 
+    if (body.action === 'create_list') {
+      const name = (body.name || '').toString().trim().slice(0, 120);
+      if (!name) return NextResponse.json({ ok: false, error: 'List name required.' }, { status: 400 });
+      const { data, error } = await supabaseAdmin.from('mls_lists').insert({ name }).select('*').single();
+      if (error) { console.error(error); return NextResponse.json({ ok: false, error: 'Could not create list.' }, { status: 500 }); }
+      return NextResponse.json({ ok: true, list: data });
+    }
+
+    if (body.action === 'rename_list') {
+      const listId = (body.list_id || '').toString();
+      const name = (body.name || '').toString().trim().slice(0, 120);
+      if (!listId || !name) return NextResponse.json({ ok: false, error: 'list_id and name required.' }, { status: 400 });
+      const { error } = await supabaseAdmin.from('mls_lists').update({ name, updated_at: new Date().toISOString() }).eq('id', listId);
+      if (error) return NextResponse.json({ ok: false, error: 'Could not rename list.' }, { status: 500 });
+      return NextResponse.json({ ok: true });
+    }
+
+    if (body.action === 'delete_list') {
+      const listId = (body.list_id || '').toString();
+      if (!listId) return NextResponse.json({ ok: false, error: 'list_id required.' }, { status: 400 });
+      const { error } = await supabaseAdmin.from('mls_lists').delete().eq('id', listId);
+      if (error) return NextResponse.json({ ok: false, error: 'Could not delete list.' }, { status: 500 });
+      return NextResponse.json({ ok: true });
+    }
+
+    if (body.action === 'add_to_list') {
+      const listId = (body.list_id || '').toString();
+      const groupKeys = Array.isArray(body.group_keys) ? body.group_keys.filter(Boolean) : [];
+      if (!listId || !groupKeys.length) return NextResponse.json({ ok: false, error: 'list_id and group_keys required.' }, { status: 400 });
+      const rows = groupKeys.map((gk) => ({ list_id: listId, group_key: gk.toString() }));
+      const { error } = await supabaseAdmin.from('mls_list_items').upsert(rows, { onConflict: 'list_id,group_key', ignoreDuplicates: true });
+      if (error) { console.error(error); return NextResponse.json({ ok: false, error: 'Could not add to list.' }, { status: 500 }); }
+      await supabaseAdmin.from('mls_lists').update({ updated_at: new Date().toISOString() }).eq('id', listId);
+      return NextResponse.json({ ok: true, added: rows.length });
+    }
+
+    if (body.action === 'remove_from_list') {
+      const listId = (body.list_id || '').toString();
+      const groupKey = (body.group_key || '').toString();
+      if (!listId || !groupKey) return NextResponse.json({ ok: false, error: 'list_id and group_key required.' }, { status: 400 });
+      const { error } = await supabaseAdmin.from('mls_list_items').delete().eq('list_id', listId).eq('group_key', groupKey);
+      if (error) return NextResponse.json({ ok: false, error: 'Could not remove item.' }, { status: 500 });
+      return NextResponse.json({ ok: true });
+    }
+
     if (body.action !== 'upload_csv') {
       return NextResponse.json({ ok: false, error: 'Unknown action.' }, { status: 400 });
     }
@@ -184,6 +229,59 @@ export async function GET(request) {
       return NextResponse.json({ ok: true, listings: data || [] });
     }
 
+    // All saved lists, with item counts.
+    if (url.searchParams.get('lists') === '1') {
+      const { data: lists, error } = await supabaseAdmin.from('mls_lists').select('*').order('updated_at', { ascending: false });
+      if (error) return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 });
+      const { data: items } = await fetchAllPaginated(() => supabaseAdmin.from('mls_list_items').select('list_id'));
+      const counts = {};
+      for (const it of items || []) counts[it.list_id] = (counts[it.list_id] || 0) + 1;
+      return NextResponse.json({ ok: true, lists: (lists || []).map((l) => ({ ...l, item_count: counts[l.id] || 0 })) });
+    }
+
+    // One list's contents, resolved to each property's current (latest-episode) data —
+    // same "most recent event wins" rule as mls_prospects, but not restricted to
+    // expired/canceled/withdrawn, since a list can include any status.
+    const listId = url.searchParams.get('list_id');
+    if (listId) {
+      const { data: list, error: listErr } = await supabaseAdmin.from('mls_lists').select('*').eq('id', listId).single();
+      if (listErr || !list) return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 });
+
+      const { data: items } = await fetchAllPaginated(() => supabaseAdmin.from('mls_list_items').select('group_key, added_at').eq('list_id', listId));
+      const groupKeys = (items || []).map((i) => i.group_key);
+      if (!groupKeys.length) return NextResponse.json({ ok: true, list, rows: [] });
+
+      // .in() breaks past ~1500-1800 items (same issue as the upload lookup) — chunk it.
+      const CHUNK = 500;
+      let listings = [];
+      for (let i = 0; i < groupKeys.length; i += CHUNK) {
+        const chunk = groupKeys.slice(i, i + CHUNK);
+        const { data, error } = await fetchAllPaginated(() => supabaseAdmin.from('mls_listings').select('*').in('group_key', chunk));
+        if (error) { console.error(error); return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 }); }
+        listings = listings.concat(data || []);
+      }
+
+      const eventDate = (r) => r.close_date || r.off_market_date || r.listing_contract_date || null;
+      const byGroup = new Map();
+      for (const r of listings) {
+        if (!byGroup.has(r.group_key)) byGroup.set(r.group_key, []);
+        byGroup.get(r.group_key).push(r);
+      }
+      const rank = (r) => (['sold', 'active', 'pending'].includes(r.status_normalized) ? 0 : 1);
+      const rows = [];
+      for (const [groupKey, group] of byGroup) {
+        const latest = group.slice().sort((a, b) => {
+          const da = eventDate(a), db = eventDate(b);
+          if (da !== db) { if (da == null) return 1; if (db == null) return -1; return da < db ? 1 : -1; }
+          if (rank(a) !== rank(b)) return rank(a) - rank(b);
+          return (b.id > a.id ? 1 : -1);
+        })[0];
+        rows.push(latest);
+      }
+      rows.sort((a, b) => (a.address || '').localeCompare(b.address || ''));
+      return NextResponse.json({ ok: true, list, rows });
+    }
+
     const prospectsOnly = url.searchParams.get('prospects_only') !== '0'; // default true
     const community = (url.searchParams.get('community') || '').trim();
     const address = (url.searchParams.get('address') || '').trim();
@@ -196,9 +294,22 @@ export async function GET(request) {
     const sqftMax = url.searchParams.get('sqft_max') || '';
     const beds = url.searchParams.get('beds') || '';
     const subType = (url.searchParams.get('sub_type') || '').trim();
+    const tagFilter = (url.searchParams.get('tag') || '').trim();
+    const filterListId = (url.searchParams.get('filter_list_id') || '').trim();
     // Strip characters that are special in PostgREST's .or() mini-syntax so a
     // comma/paren in a search box can't break or smuggle extra filter clauses.
     const escLike = (s) => s.replace(/[,()]/g, '');
+
+    // Resolve "search within this list" to its group_keys up front, once, so
+    // both search modes can just .in() against them.
+    let listGroupKeys = null;
+    if (filterListId) {
+      const { data: items } = await fetchAllPaginated(() => supabaseAdmin.from('mls_list_items').select('group_key').eq('list_id', filterListId));
+      listGroupKeys = (items || []).map((i) => i.group_key);
+      if (listGroupKeys.length === 0) {
+        return NextResponse.json({ ok: true, rows: [], mode: prospectsOnly ? 'prospects' : 'all' });
+      }
+    }
 
     if (prospectsOnly) {
       // lat/lng were added in a later migration — if it hasn't been run yet on this
@@ -217,6 +328,8 @@ export async function GET(request) {
         if (sqftMax) q = q.lte('living_area', Number(sqftMax));
         if (beds) q = q.gte('beds_total', Number(beds));
         if (subType) q = q.ilike('property_sub_type', `%${escLike(subType)}%`);
+        if (tagFilter) q = q.ilike('tag', `%${escLike(tagFilter)}%`);
+        if (listGroupKeys) q = q.in('group_key', listGroupKeys);
         return q.order('last_off_market_date', { ascending: false });
       };
 
@@ -242,6 +355,8 @@ export async function GET(request) {
       if (sqftMax) q = q.lte('living_area', Number(sqftMax));
       if (beds) q = q.gte('beds_total', Number(beds));
       if (subType) q = q.ilike('property_sub_type', `%${escLike(subType)}%`);
+      if (tagFilter) q = q.ilike('tag', `%${escLike(tagFilter)}%`);
+      if (listGroupKeys) q = q.in('group_key', listGroupKeys);
       return q.order('uploaded_at', { ascending: false });
     };
     const { data, error } = await fetchAllPaginated(buildAllHistoryQuery);

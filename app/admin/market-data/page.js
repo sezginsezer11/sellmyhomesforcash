@@ -43,16 +43,17 @@ export default function MarketDataPage() {
           <a className="m-link" href="/admin">← Leads</a>
           <a className="m-link" href="/admin/comps">Comps</a>
           <span className="m-me">{session.user.email}</span>
-          <button className="m-uploadbtn" onClick={() => setTab('upload')}>⬆ Upload new list</button>
+          <button className="m-uploadbtn" onClick={() => setTab('upload')}>⬆ Upload CSV</button>
         </div>
       </div>
 
       <div className="m-tabs">
         <button className={'m-tab' + (tab === 'search' ? ' on' : '')} onClick={() => setTab('search')}>Search</button>
+        <button className={'m-tab' + (tab === 'lists' ? ' on' : '')} onClick={() => setTab('lists')}>Lists</button>
         <button className={'m-tab' + (tab === 'upload' ? ' on' : '')} onClick={() => setTab('upload')}>Upload</button>
       </div>
 
-      {tab === 'upload' ? <UploadTab token={token} /> : <SearchTab token={token} />}
+      {tab === 'upload' ? <UploadTab token={token} /> : tab === 'lists' ? <ListsTab token={token} /> : <SearchTab token={token} />}
 
       <style>{css}</style>
     </div>
@@ -132,6 +133,158 @@ function UploadTab({ token }) {
   );
 }
 
+// ===== Lists tab =====
+
+function ListsTab({ token }) {
+  const [lists, setLists] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [openId, setOpenId] = useState('');
+  const [openList, setOpenList] = useState(null);
+  const [openRows, setOpenRows] = useState([]);
+  const [openLoading, setOpenLoading] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [renameVal, setRenameVal] = useState('');
+
+  const loadLists = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/market-data?lists=1', { headers: { Authorization: 'Bearer ' + token() } });
+      const j = await res.json();
+      if (j.ok) setLists(j.lists || []);
+    } catch {}
+    setLoading(false);
+  };
+  useEffect(() => { loadLists(); }, []);
+
+  const openOne = async (id) => {
+    setOpenId(id); setOpenList(null); setOpenRows([]); setOpenLoading(true); setRenaming(false);
+    try {
+      const res = await fetch('/api/market-data?list_id=' + encodeURIComponent(id), { headers: { Authorization: 'Bearer ' + token() } });
+      const j = await res.json();
+      if (j.ok) { setOpenList(j.list); setOpenRows(j.rows || []); }
+    } catch {}
+    setOpenLoading(false);
+  };
+
+  const removeItem = async (groupKey) => {
+    setOpenRows((rs) => rs.filter((r) => r.group_key !== groupKey));
+    try {
+      await fetch('/api/market-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+        body: JSON.stringify({ action: 'remove_from_list', list_id: openId, group_key: groupKey }),
+      });
+      loadLists();
+    } catch {}
+  };
+
+  const saveRename = async () => {
+    const name = renameVal.trim();
+    if (!name) { setRenaming(false); return; }
+    setOpenList((l) => ({ ...l, name }));
+    setRenaming(false);
+    try {
+      await fetch('/api/market-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+        body: JSON.stringify({ action: 'rename_list', list_id: openId, name }),
+      });
+      loadLists();
+    } catch {}
+  };
+
+  const deleteList = async () => {
+    if (!window.confirm(`Delete list "${openList?.name}"? This can't be undone.`)) return;
+    try {
+      await fetch('/api/market-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+        body: JSON.stringify({ action: 'delete_list', list_id: openId }),
+      });
+    } catch {}
+    setOpenId(''); setOpenList(null); setOpenRows([]);
+    loadLists();
+  };
+
+  const exportCSV = () => {
+    const cols = ['address', 'subdivision', 'neighborhood', 'mls_area', 'property_sub_type', 'beds_total', 'baths_total', 'living_area', 'status_normalized', 'orig_list_price', 'off_market_date', 'tag'];
+    const esc = (v) => '"' + (v == null ? '' : String(v).replace(/"/g, '""')) + '"';
+    const csv = [cols.join(',')].concat(openRows.map((r) => cols.map((c) => esc(r[c])).join(','))).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = (openList?.name || 'list').replace(/[^a-z0-9]+/gi, '-') + '.csv';
+    a.click(); URL.revokeObjectURL(url);
+  };
+
+  if (openId) {
+    return (
+      <div className="m-listsview">
+        <button className="m-backbtn" onClick={() => { setOpenId(''); setOpenList(null); }}>← All lists</button>
+        {openLoading ? <p>Loading…</p> : !openList ? <p>List not found.</p> : (
+          <>
+            <div className="m-listhead">
+              {renaming ? (
+                <div className="m-listrename">
+                  <input value={renameVal} onChange={(e) => setRenameVal(e.target.value)} autoFocus />
+                  <button onClick={saveRename}>Save</button>
+                  <button onClick={() => setRenaming(false)}>Cancel</button>
+                </div>
+              ) : (
+                <h2>{openList.name} <span className="m-listcount">({openRows.length})</span></h2>
+              )}
+              <div className="m-listactions">
+                {!renaming && <button className="m-listactbtn" onClick={() => { setRenaming(true); setRenameVal(openList.name); }}>Rename</button>}
+                {openRows.length > 0 && <button className="m-listactbtn" onClick={exportCSV}>Export CSV</button>}
+                <button className="m-listactbtn danger" onClick={deleteList}>Delete list</button>
+              </div>
+            </div>
+            <div className="m-tablewrap">
+              <table className="m-table">
+                <thead>
+                  <tr>
+                    <th>Address</th><th>Community</th><th>Status</th><th>Tag</th>
+                    <th className="m-r">List Price</th><th>Off-Market</th><th>Beds/Baths/SqFt</th><th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {openRows.length === 0 && <tr><td colSpan={8} className="m-empty">No properties in this list yet.</td></tr>}
+                  {openRows.map((r) => (
+                    <tr key={r.group_key}>
+                      <td className="m-addr">{r.address}</td>
+                      <td>{r.subdivision || r.neighborhood || r.mls_area || '—'}</td>
+                      <td><span className="m-status" style={{ background: (STATUS_COLOR[r.status_normalized] || '#6a7a82') + '1c', color: STATUS_COLOR[r.status_normalized] || '#6a7a82' }}>{r.status_normalized}</span></td>
+                      <td>{r.tag || '—'}</td>
+                      <td className="m-r">{fmtMoney(r.orig_list_price)}</td>
+                      <td>{fmtDate(r.off_market_date)}</td>
+                      <td>{r.beds_total || '—'}/{r.baths_total || '—'}/{r.living_area ? Number(r.living_area).toLocaleString() : '—'}</td>
+                      <td><button className="m-removebtn" onClick={() => removeItem(r.group_key)}>Remove</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="m-listsview">
+      {loading ? <p>Loading…</p> : lists.length === 0 ? (
+        <p className="m-dim">No lists yet — select properties in Search (table or map) and add them to a new list.</p>
+      ) : (
+        <div className="m-listsgrid">
+          {lists.map((l) => (
+            <div className="m-listcard" key={l.id} onClick={() => openOne(l.id)}>
+              <div className="m-listcardname">{l.name}</div>
+              <div className="m-listcardmeta">{l.item_count} propert{l.item_count === 1 ? 'y' : 'ies'}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ===== Search tab =====
 
 function SearchTab({ token }) {
@@ -147,6 +300,8 @@ function SearchTab({ token }) {
   const [sqftMax, setSqftMax] = useState('');
   const [beds, setBeds] = useState('');
   const [subType, setSubType] = useState('');
+  const [listFilter, setListFilter] = useState('');
+  const [tagFilter, setTagFilter] = useState('');
   const [rows, setRows] = useState([]);
   const [mode, setMode] = useState('prospects');
   const [loading, setLoading] = useState(false);
@@ -161,6 +316,62 @@ function SearchTab({ token }) {
   const [timelineIndex, setTimelineIndex] = useState(-1); // position within sortedRows, for Prev/Next
   const [showDetails, setShowDetails] = useState(false);
   const [addrCopied, setAddrCopied] = useState(false);
+  const [selected, setSelected] = useState(() => new Set());
+  const [lists, setLists] = useState([]);
+  const [listChoice, setListChoice] = useState('');
+  const [newListName, setNewListName] = useState('');
+  const [addingToList, setAddingToList] = useState(false);
+  const [addMsg, setAddMsg] = useState('');
+
+  const loadLists = async () => {
+    try {
+      const res = await fetch('/api/market-data?lists=1', { headers: { Authorization: 'Bearer ' + token() } });
+      const j = await res.json();
+      if (j.ok) setLists(j.lists || []);
+    } catch {}
+  };
+  useEffect(() => { loadLists(); }, []);
+
+  const toggleSelect = (groupKey) => {
+    setSelected((s) => {
+      const next = new Set(s);
+      if (next.has(groupKey)) next.delete(groupKey); else next.add(groupKey);
+      return next;
+    });
+  };
+  const toggleSelectAll = () => {
+    const keys = sortedRows.map((r) => r.group_key);
+    const allSelected = keys.length > 0 && keys.every((k) => selected.has(k));
+    setSelected(allSelected ? new Set() : new Set(keys));
+  };
+
+  const addSelectedToList = async () => {
+    const groupKeys = Array.from(selected);
+    if (!groupKeys.length) return;
+    setAddingToList(true); setAddMsg('');
+    try {
+      let listId = listChoice;
+      if (!listId && newListName.trim()) {
+        const res = await fetch('/api/market-data', {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+          body: JSON.stringify({ action: 'create_list', name: newListName.trim() }),
+        });
+        const j = await res.json();
+        if (j.ok) { listId = j.list.id; await loadLists(); setListChoice(listId); setNewListName(''); }
+        else { setAddMsg(j.error || 'Could not create list.'); setAddingToList(false); return; }
+      }
+      if (!listId) { setAddMsg('Pick or name a list.'); setAddingToList(false); return; }
+      const res = await fetch('/api/market-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+        body: JSON.stringify({ action: 'add_to_list', list_id: listId, group_keys: groupKeys }),
+      });
+      const j = await res.json();
+      if (j.ok) { setAddMsg(`Added ${groupKeys.length} to list ✓`); setSelected(new Set()); loadLists(); }
+      else setAddMsg(j.error || 'Could not add to list.');
+    } catch { setAddMsg('Error adding to list.'); }
+    setAddingToList(false);
+    setTimeout(() => setAddMsg(''), 3000);
+  };
 
   const runSearch = async () => {
     setLoading(true); setSearched(true);
@@ -168,7 +379,7 @@ function SearchTab({ token }) {
       prospects_only: prospectsOnly ? '1' : '0',
       status, community, address, off_from: offFrom, off_to: offTo,
       price_min: priceMin, price_max: priceMax, sqft_min: sqftMin, sqft_max: sqftMax,
-      beds, sub_type: subType,
+      beds, sub_type: subType, filter_list_id: listFilter, tag: tagFilter,
     });
     try {
       const res = await fetch('/api/market-data?' + params.toString(), { headers: { Authorization: 'Bearer ' + token() } });
@@ -303,14 +514,26 @@ function SearchTab({ token }) {
           {STATUSES.map((s) => <option key={s} value={s}>{s[0].toUpperCase() + s.slice(1)}</option>)}
           {!prospectsOnly && <><option value="active">Active</option><option value="pending">Pending</option><option value="sold">Sold</option><option value="unknown">Unknown</option></>}
         </select>
-        <input type="date" value={offFrom} onChange={(e) => setOffFrom(e.target.value)} title="Off-market from" />
-        <input type="date" value={offTo} onChange={(e) => setOffTo(e.target.value)} title="Off-market to" />
+        <div className="m-datefield">
+          <span className="m-datelabel">Off-market date</span>
+          <div className="m-daterange">
+            <input type="date" value={offFrom} onChange={(e) => setOffFrom(e.target.value)} title="Off-market from" />
+            <span>to</span>
+            <input type="date" value={offTo} onChange={(e) => setOffTo(e.target.value)} title="Off-market to" />
+            {(offFrom || offTo) && <button type="button" className="m-dateclear" title="Clear dates" onClick={() => { setOffFrom(''); setOffTo(''); }}>✕</button>}
+          </div>
+        </div>
         <input type="number" placeholder="Min price" value={priceMin} onChange={(e) => setPriceMin(e.target.value)} />
         <input type="number" placeholder="Max price" value={priceMax} onChange={(e) => setPriceMax(e.target.value)} />
         <input type="number" placeholder="Min sqft" value={sqftMin} onChange={(e) => setSqftMin(e.target.value)} />
         <input type="number" placeholder="Max sqft" value={sqftMax} onChange={(e) => setSqftMax(e.target.value)} />
         <input type="number" placeholder="Beds (min)" value={beds} onChange={(e) => setBeds(e.target.value)} />
         <input placeholder="Property sub type…" value={subType} onChange={(e) => setSubType(e.target.value)} />
+        <select value={listFilter} onChange={(e) => setListFilter(e.target.value)}>
+          <option value="">Any list</option>
+          {lists.map((l) => <option key={l.id} value={l.id}>{l.name} ({l.item_count})</option>)}
+        </select>
+        <input placeholder="Tag…" value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} />
         <button className="m-searchbtn" onClick={runSearch} disabled={loading}>{loading ? 'Searching…' : 'Search'}</button>
         {searched && rows.length > 0 && <button className="m-exportbtn" onClick={exportCSV}>Export CSV</button>}
       </div>
@@ -338,13 +561,34 @@ function SearchTab({ token }) {
             </div>
           )}
 
+          {selected.size > 0 && (
+            <div className="m-selectbar">
+              <span className="m-selectcount">{selected.size} selected</span>
+              <select value={listChoice} onChange={(e) => { setListChoice(e.target.value); if (e.target.value) setNewListName(''); }}>
+                <option value="">Choose a list…</option>
+                {lists.map((l) => <option key={l.id} value={l.id}>{l.name} ({l.item_count})</option>)}
+              </select>
+              <span className="m-selectorsep">or</span>
+              <input placeholder="New list name…" value={newListName}
+                onChange={(e) => { setNewListName(e.target.value); if (e.target.value) setListChoice(''); }} />
+              <button className="m-addlistbtn" onClick={addSelectedToList} disabled={addingToList || (!listChoice && !newListName.trim())}>
+                {addingToList ? 'Adding…' : 'Add to list'}
+              </button>
+              {addMsg && <span className="m-selectmsg">{addMsg}</span>}
+              <button className="m-clearselectbtn" onClick={() => setSelected(new Set())}>Clear</button>
+            </div>
+          )}
+
           {view === 'map' ? (
-            <MarketMap rows={sortedRows} mode={mode} isStarred={isStarred} onMarkerClick={openTimeline} />
+            <MarketMap rows={sortedRows} mode={mode} isStarred={isStarred} onMarkerClick={openTimeline} selected={selected} onToggleSelect={toggleSelect} />
           ) : (
           <div className="m-tablewrap">
             <table className="m-table">
               <thead>
                 <tr>
+                  <th className="m-checkcol">
+                    <input type="checkbox" checked={sortedRows.length > 0 && sortedRows.every((r) => selected.has(r.group_key))} onChange={toggleSelectAll} title="Select all" />
+                  </th>
                   <th className="m-starcol m-sortable" onClick={() => toggleSort('star')} title="Sort by starred">★</th>
                   <th className="m-sortable" onClick={() => toggleSort('address')}>Address{sortArrow('address')}</th>
                   <th className="m-sortable" onClick={() => toggleSort('community')}>Community{sortArrow('community')}</th>
@@ -357,9 +601,12 @@ function SearchTab({ token }) {
                 </tr>
               </thead>
               <tbody>
-                {rows.length === 0 && <tr><td colSpan={9} className="m-empty">No matches.</td></tr>}
+                {rows.length === 0 && <tr><td colSpan={10} className="m-empty">No matches.</td></tr>}
                 {mode === 'prospects' ? sortedRows.map((r, i) => (
                   <tr key={r.group_key} onClick={() => openTimeline(r.group_key, i)} className="m-clickrow">
+                    <td className="m-checkcol" onClick={(e) => e.stopPropagation()}>
+                      <input type="checkbox" checked={selected.has(r.group_key)} onChange={() => toggleSelect(r.group_key)} />
+                    </td>
                     <td className="m-starcol" onClick={(e) => e.stopPropagation()}>
                       <button className={'m-starbtn' + (isStarred(r) ? ' on' : '')} onClick={() => toggleStar(r)}>★</button>
                     </td>
@@ -377,6 +624,9 @@ function SearchTab({ token }) {
                   </tr>
                 )) : sortedRows.map((r, i) => (
                   <tr key={r.id} onClick={() => openTimeline(r.group_key, i)} className="m-clickrow">
+                    <td className="m-checkcol" onClick={(e) => e.stopPropagation()}>
+                      <input type="checkbox" checked={selected.has(r.group_key)} onChange={() => toggleSelect(r.group_key)} />
+                    </td>
                     <td className="m-starcol" onClick={(e) => e.stopPropagation()}>
                       <button className={'m-starbtn' + (isStarred(r) ? ' on' : '')} title={r.is_current_prospect ? 'Currently a prospect' : ''} onClick={() => toggleStar(r)}>★</button>
                     </td>
@@ -481,11 +731,25 @@ function SearchTab({ token }) {
 }
 
 // ---- Google Map with status-colored pins ----
-function MarketMap({ rows, mode, isStarred, onMarkerClick }) {
+function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, onToggleSelect }) {
   const ref = useRef(null);
   const [status, setStatus] = useState('loading'); // loading | ok | nocoords | noauth
 
   const pts = rows.filter((r) => r.lat && r.lng);
+
+  // The main map-build effect deliberately doesn't depend on `selected` (toggling
+  // a selection shouldn't rebuild the map and reset pan/zoom), so its mouseover
+  // closures can't just read the `selected` prop — they'd see a stale snapshot.
+  // A ref kept in sync on every selection change gives them the live value instead.
+  const selectedRef = useRef(selected);
+  useEffect(() => { selectedRef.current = selected; }, [selected]);
+
+  // Bridge for the plain-HTML InfoWindow content to call back into React without
+  // rebuilding the whole map (selection shouldn't reset pan/zoom or reload markers).
+  useEffect(() => {
+    window.__mdToggleSelect = (groupKey) => onToggleSelect(groupKey);
+    return () => { delete window.__mdToggleSelect; };
+  }, [onToggleSelect]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -543,16 +807,21 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick }) {
             position: pos, map, title: r.address,
             icon: { path: g.SymbolPath.CIRCLE, scale: starred ? 11 : 8, fillColor: starred ? GOLD : color, fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 },
           });
-          // Hover shows a quick preview; click opens the full history modal
-          // (same action a table row's click does).
+          // Hover shows a quick preview (with a select-toggle button bridged back
+          // into React); click opens the full history modal, same as a table row.
           marker.addListener('mouseover', () => {
             const price = fmtMoney(mode === 'prospects' ? r.last_list_price : r.orig_list_price);
+            const isSel = selectedRef.current.has(r.group_key);
+            const gkEscaped = (r.group_key || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
             info.setContent(
               '<div style="font-family:Jost,sans-serif;max-width:220px;color:#1c2b33">' +
               '<div style="font-weight:700;font-size:15px">' + (r.address || '') + '</div>' +
               '<div style="font-size:14px;font-weight:600;margin:2px 0 4px">' + price + '</div>' +
               '<div style="font-size:12px;color:#6a7a82">' + [rowStatus, r.subdivision || r.neighborhood].filter(Boolean).join(' · ') + '</div>' +
               (r.tag ? '<div style="font-size:11.5px;color:#296190;margin-top:4px">#' + r.tag + '</div>' : '') +
+              '<button onclick="window.__mdToggleSelect && window.__mdToggleSelect(\'' + gkEscaped + '\')" style="margin-top:8px;padding:4px 10px;font-size:11.5px;font-weight:600;border-radius:5px;cursor:pointer;' +
+                (isSel ? 'background:#296190;color:#fff;border:1px solid #296190;' : 'background:#fff;color:#4a5a62;border:1px solid #d5dbdf;') +
+              '">' + (isSel ? '☑ Selected' : '☐ Select') + '</button>' +
               '</div>'
             );
             info.open(map, marker);
@@ -611,6 +880,12 @@ const css = `
   .m-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; align-items: center; }
   .m-filters input, .m-filters select { padding: 9px 11px; border: 1px solid #d5dbdf; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13.5px; background: #fff; }
   .m-filters input[placeholder*="Address"], .m-filters input[placeholder*="Community"] { flex: 1; min-width: 180px; }
+  .m-datefield { display: flex; flex-direction: column; gap: 3px; }
+  .m-datelabel { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #8a9aa2; }
+  .m-daterange { display: flex; align-items: center; gap: 6px; }
+  .m-daterange span { font-size: 12.5px; color: #9aa4ab; }
+  .m-dateclear { background: none; border: 0; cursor: pointer; font-size: 12px; color: #9aa4ab; padding: 2px 4px; }
+  .m-dateclear:hover { color: #8a2020; }
   .m-searchbtn { padding: 9px 18px; background: #296190; color: #fff; border: 0; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13.5px; font-weight: 600; cursor: pointer; }
   .m-searchbtn:disabled { opacity: .6; cursor: default; }
   .m-exportbtn { padding: 9px 16px; background: #1c5b34; color: #fff; border: 0; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13.5px; font-weight: 600; cursor: pointer; }
@@ -641,7 +916,35 @@ const css = `
   .m-status { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em; padding: 3px 9px; border-radius: 10px; }
   .m-dim { color: #9aa4ab; font-size: 12px; }
   .m-empty { text-align: center; color: #6a7a82; padding: 24px; }
+  .m-listsview { margin-top: 4px; }
+  .m-listsgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+  .m-listcard { background: #fff; border: 1px solid #e6e9ec; border-radius: 10px; padding: 16px; cursor: pointer; transition: box-shadow .15s, border-color .15s; }
+  .m-listcard:hover { border-color: #296190; box-shadow: 0 4px 14px rgba(20,40,60,.08); }
+  .m-listcardname { font-weight: 700; font-size: 15px; color: #1c2b33; margin-bottom: 4px; }
+  .m-listcardmeta { font-size: 12.5px; color: #6a7a82; }
+  .m-backbtn { background: none; border: 0; color: #296190; font-family: 'Jost',sans-serif; font-size: 13.5px; cursor: pointer; padding: 0; margin-bottom: 14px; }
+  .m-listhead { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+  .m-listhead h2 { font-family: 'Cormorant Garamond',serif; font-size: 24px; margin: 0; }
+  .m-listcount { font-size: 15px; color: #9aa4ab; font-weight: 400; }
+  .m-listrename { display: flex; gap: 8px; align-items: center; }
+  .m-listrename input { padding: 7px 10px; border: 1px solid #d5dbdf; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 15px; }
+  .m-listrename button { padding: 6px 12px; border: 1px solid #d5dbdf; background: #fff; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 12.5px; cursor: pointer; }
+  .m-listactions { display: flex; gap: 8px; }
+  .m-listactbtn { padding: 7px 13px; border: 1px solid #d5dbdf; background: #fff; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 12.5px; font-weight: 600; color: #4a5a62; cursor: pointer; }
+  .m-listactbtn:hover { border-color: #296190; color: #296190; }
+  .m-listactbtn.danger:hover { border-color: #8a2020; color: #8a2020; }
+  .m-removebtn { background: none; border: 0; color: #8a2020; font-family: 'Jost',sans-serif; font-size: 12px; cursor: pointer; opacity: .7; }
+  .m-removebtn:hover { opacity: 1; text-decoration: underline; }
+  .m-checkcol { width: 32px; text-align: center !important; padding: 6px !important; }
   .m-starcol { width: 36px; text-align: center !important; padding: 6px !important; }
+  .m-selectbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: #eaf2fa; border: 1px solid #bcd2e4; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px; }
+  .m-selectbar select, .m-selectbar input { padding: 7px 9px; border: 1px solid #d5dbdf; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 12.5px; background: #fff; }
+  .m-selectcount { font-weight: 700; color: #1c2b33; white-space: nowrap; }
+  .m-selectorsep { color: #9aa4ab; font-size: 12px; }
+  .m-addlistbtn { padding: 7px 14px; background: #296190; color: #fff; border: 0; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .m-addlistbtn:disabled { opacity: .5; cursor: default; }
+  .m-selectmsg { color: #1c5b34; font-weight: 600; }
+  .m-clearselectbtn { background: none; border: 0; color: #6a7a82; font-family: 'Jost',sans-serif; font-size: 12.5px; cursor: pointer; text-decoration: underline; margin-left: auto; }
   .m-starbtn { background: none; border: 0; cursor: pointer; font-size: 16px; color: #d5dbdf; padding: 2px; line-height: 1; }
   .m-starbtn.on { color: #e0a800; }
   .m-starbtn:hover { color: #b8860b; }
