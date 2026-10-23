@@ -41,6 +41,39 @@ async function fetchAllPaginated(buildQuery, cap = 20000) {
   return { data: all, error: null };
 }
 
+// Attaches list_names (array) to each row — a property can be on multiple
+// lists at once (mls_list_items has no unique-per-property constraint, only
+// unique-per-list-per-property), same as tags. Degrades silently to no
+// list_names rather than breaking search if the lists tables aren't there.
+async function attachListMemberships(rows) {
+  try {
+    const groupKeys = [...new Set(rows.map((r) => r.group_key).filter(Boolean))];
+    if (!groupKeys.length) return rows;
+    const CHUNK = 500;
+    let items = [];
+    for (let i = 0; i < groupKeys.length; i += CHUNK) {
+      const chunk = groupKeys.slice(i, i + CHUNK);
+      const { data, error } = await fetchAllPaginated(() => supabaseAdmin.from('mls_list_items').select('group_key, list_id').in('group_key', chunk));
+      if (error) return rows;
+      items = items.concat(data || []);
+    }
+    if (!items.length) return rows.map((r) => ({ ...r, list_names: [] }));
+    const listIds = [...new Set(items.map((i) => i.list_id))];
+    const { data: listsData, error: listsErr } = await fetchAllPaginated(() => supabaseAdmin.from('mls_lists').select('id, name').in('id', listIds));
+    if (listsErr) return rows;
+    const nameById = new Map((listsData || []).map((l) => [l.id, l.name]));
+    const namesByGroup = new Map();
+    for (const it of items) {
+      if (!namesByGroup.has(it.group_key)) namesByGroup.set(it.group_key, []);
+      namesByGroup.get(it.group_key).push(nameById.get(it.list_id) || '');
+    }
+    return rows.map((r) => ({ ...r, list_names: namesByGroup.get(r.group_key) || [] }));
+  } catch (e) {
+    console.error('attachListMemberships error:', e);
+    return rows;
+  }
+}
+
 // POST — admin uploads a CSV export.
 export async function POST(request) {
   try {
@@ -338,7 +371,8 @@ export async function GET(request) {
         ({ data, error } = await fetchAllPaginated(buildProspectsQuery(SEARCH_FIELDS_PROSPECTS.filter((f) => f !== 'lat' && f !== 'lng'))));
       }
       if (error) { console.error(error); return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 }); }
-      return NextResponse.json({ ok: true, rows: data || [], mode: 'prospects' });
+      const withLists = await attachListMemberships(data || []);
+      return NextResponse.json({ ok: true, rows: withLists, mode: 'prospects' });
     }
 
     // All history — every listing episode, not deduped by APN.
@@ -367,8 +401,9 @@ export async function GET(request) {
     const { data: prospectMls } = await fetchAllPaginated(() => supabaseAdmin.from('mls_prospects').select('last_mls_number'));
     const prospectSet = new Set((prospectMls || []).map((p) => p.last_mls_number));
     const rows = (data || []).map((r) => ({ ...r, is_current_prospect: prospectSet.has(r.mls_number) }));
+    const withLists = await attachListMemberships(rows);
 
-    return NextResponse.json({ ok: true, rows, mode: 'all' });
+    return NextResponse.json({ ok: true, rows: withLists, mode: 'all' });
   } catch (e) {
     console.error('market-data GET error:', e);
     return NextResponse.json({ ok: false, error: 'Something went wrong.' }, { status: 500 });

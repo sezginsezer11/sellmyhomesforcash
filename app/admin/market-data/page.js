@@ -294,6 +294,47 @@ function ListsTab({ token }) {
   );
 }
 
+// ===== Typed date input =====
+// Native <input type="date"> requires clicking into each segment and its
+// calendar popup has no quick year-jump (painful for a tool that searches
+// decades back). Three plain typed fields with auto-advance and a direct
+// year field fix both — no popup at all.
+
+function TypedDateInput({ value, onChange, title }) {
+  const [yy, mm, dd] = value ? value.split('-') : ['', '', ''];
+  const [m, setM] = useState(mm || '');
+  const [d, setD] = useState(dd || '');
+  const [y, setY] = useState(yy || '');
+  const dRef = useRef(null);
+  const yRef = useRef(null);
+
+  useEffect(() => {
+    const [ny, nm, nd] = value ? value.split('-') : ['', '', ''];
+    setM(nm || ''); setD(nd || ''); setY(ny || '');
+  }, [value]);
+
+  const commit = (nm, nd, ny) => {
+    if (nm && nd && ny && ny.length === 4) onChange(`${ny}-${nm.padStart(2, '0')}-${nd.padStart(2, '0')}`);
+    else if (!nm && !nd && !ny) onChange('');
+  };
+
+  return (
+    <span className="m-typeddate" title={title}>
+      <input className="m-datemm" placeholder="MM" inputMode="numeric" maxLength={2} value={m}
+        onChange={(e) => { const v = e.target.value.replace(/\D/g, '').slice(0, 2); setM(v); if (v.length === 2) dRef.current?.focus(); }}
+        onBlur={() => commit(m, d, y)} />
+      <span>/</span>
+      <input ref={dRef} className="m-datedd" placeholder="DD" inputMode="numeric" maxLength={2} value={d}
+        onChange={(e) => { const v = e.target.value.replace(/\D/g, '').slice(0, 2); setD(v); if (v.length === 2) yRef.current?.focus(); }}
+        onBlur={() => commit(m, d, y)} />
+      <span>/</span>
+      <input ref={yRef} className="m-dateyy" placeholder="YYYY" inputMode="numeric" maxLength={4} value={y}
+        onChange={(e) => { const v = e.target.value.replace(/\D/g, '').slice(0, 4); setY(v); }}
+        onBlur={() => commit(m, d, y)} />
+    </span>
+  );
+}
+
 // ===== Search tab =====
 
 function SearchTab({ token }) {
@@ -526,9 +567,9 @@ function SearchTab({ token }) {
         <div className="m-datefield">
           <span className="m-datelabel">Off-market date</span>
           <div className="m-daterange">
-            <input type="date" value={offFrom} onChange={(e) => setOffFrom(e.target.value)} title="Off-market from" />
+            <TypedDateInput value={offFrom} onChange={setOffFrom} title="Off-market from" />
             <span>to</span>
-            <input type="date" value={offTo} onChange={(e) => setOffTo(e.target.value)} title="Off-market to" />
+            <TypedDateInput value={offTo} onChange={setOffTo} title="Off-market to" />
             {(offFrom || offTo) && <button type="button" className="m-dateclear" title="Clear dates" onClick={() => { setOffFrom(''); setOffTo(''); }}>✕</button>}
           </div>
         </div>
@@ -603,6 +644,7 @@ function SearchTab({ token }) {
                   <th className="m-sortable" onClick={() => toggleSort('community')}>Community{sortArrow('community')}</th>
                   <th className="m-sortable" onClick={() => toggleSort('status')}>Status{sortArrow('status')}</th>
                   <th className="m-sortable" onClick={() => toggleSort('tag')}>Tag{sortArrow('tag')}</th>
+                  <th>Lists</th>
                   <th className="m-r m-sortable" onClick={() => toggleSort('price')}>List Price{sortArrow('price')}</th>
                   <th className="m-sortable" onClick={() => toggleSort('off_market')}>Off-Market{sortArrow('off_market')}</th>
                   <th className="m-r m-sortable" onClick={() => toggleSort('times_listed')}>Times Listed{sortArrow('times_listed')}</th>
@@ -610,7 +652,7 @@ function SearchTab({ token }) {
                 </tr>
               </thead>
               <tbody>
-                {rows.length === 0 && <tr><td colSpan={10} className="m-empty">No matches.</td></tr>}
+                {rows.length === 0 && <tr><td colSpan={11} className="m-empty">No matches.</td></tr>}
                 {mode === 'prospects' ? sortedRows.map((r, i) => (
                   <tr key={r.group_key} onClick={() => openTimeline(r.group_key, i)} className="m-clickrow">
                     <td className="m-checkcol" onClick={(e) => e.stopPropagation()}>
@@ -626,6 +668,7 @@ function SearchTab({ token }) {
                       <input className="m-taginput" placeholder="+ tag" value={r.tag || ''}
                         onChange={(e) => editTag(r, e.target.value)} onBlur={(e) => saveTag(r, e.target.value)} />
                     </td>
+                    <td>{(r.list_names || []).map((name, j) => <span className="m-listbadge" key={j}>{name}</span>)}</td>
                     <td className="m-r">{fmtMoney(r.last_list_price)}</td>
                     <td>{fmtDate(r.last_off_market_date)} <span className="m-dim">({r.days_since_off_market}d)</span></td>
                     <td className="m-r">{r.times_listed_without_selling}</td>
@@ -646,6 +689,7 @@ function SearchTab({ token }) {
                       <input className="m-taginput" placeholder="+ tag" value={r.tag || ''}
                         onChange={(e) => editTag(r, e.target.value)} onBlur={(e) => saveTag(r, e.target.value)} />
                     </td>
+                    <td>{(r.list_names || []).map((name, j) => <span className="m-listbadge" key={j}>{name}</span>)}</td>
                     <td className="m-r">{fmtMoney(r.orig_list_price)}</td>
                     <td>{fmtDate(r.off_market_date)}</td>
                     <td className="m-r">—</td>
@@ -901,6 +945,12 @@ const css = `
   .m-datelabel { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #8a9aa2; }
   .m-daterange { display: flex; align-items: center; gap: 6px; }
   .m-daterange span { font-size: 12.5px; color: #9aa4ab; }
+  .m-typeddate { display: inline-flex; align-items: center; gap: 2px; border: 1px solid #d5dbdf; border-radius: 6px; padding: 7px 8px; background: #fff; }
+  .m-typeddate span { color: #c5ccd1; font-size: 12px; }
+  .m-typeddate input { border: 0; padding: 0; font-family: 'Jost',sans-serif; font-size: 13.5px; background: transparent; text-align: center; }
+  .m-typeddate input:focus { outline: none; }
+  .m-datemm, .m-datedd { width: 22px; }
+  .m-dateyy { width: 38px; }
   .m-dateclear { background: none; border: 0; cursor: pointer; font-size: 12px; color: #9aa4ab; padding: 2px 4px; }
   .m-dateclear:hover { color: #8a2020; }
   .m-searchbtn { padding: 9px 18px; background: #296190; color: #fff; border: 0; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13.5px; font-weight: 600; cursor: pointer; }
@@ -967,6 +1017,7 @@ const css = `
   .m-starbtn:hover { color: #b8860b; }
   .m-taginput { width: 100px; padding: 5px 7px; border: 1px solid #e6e9ec; border-radius: 5px; font-family: 'Jost',sans-serif; font-size: 12.5px; background: #fafbfc; }
   .m-taginput:focus { outline: none; border-color: #296190; background: #fff; }
+  .m-listbadge { display: inline-block; background: #eaf2fa; color: #296190; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; margin: 1px 3px 1px 0; white-space: nowrap; }
 
   .m-modalbg { position: fixed; inset: 0; background: rgba(20,30,38,.55); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 24px; }
   .m-modal { background: #fff; border-radius: 10px; width: 100%; max-width: 560px; max-height: 80vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.3); }
