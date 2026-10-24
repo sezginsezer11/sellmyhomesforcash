@@ -630,7 +630,7 @@ function SearchTab({ token }) {
           )}
 
           {view === 'map' ? (
-            <MarketMap rows={sortedRows} mode={mode} isStarred={isStarred} onMarkerClick={openTimeline} selected={selected} onToggleSelect={toggleSelect} />
+            <MarketMap rows={sortedRows} mode={mode} isStarred={isStarred} onMarkerClick={openTimeline} />
           ) : (
           <div className="m-tablewrap">
             <table className="m-table">
@@ -712,7 +712,15 @@ function SearchTab({ token }) {
                 <button className="m-navbtn" onClick={() => goToTimeline(1)} disabled={timelineIndex < 0 || timelineIndex >= sortedRows.length - 1} title="Next">Next ›</button>
               </div>
               <span>Listing history</span>
-              <button className="m-modalclose" onClick={() => setTimelineKey('')}>✕</button>
+              <div className="m-modalright">
+                {timelineProperty && (
+                  <label className="m-modalselect">
+                    <input type="checkbox" checked={selected.has(timelineProperty.group_key)} onChange={() => toggleSelect(timelineProperty.group_key)} />
+                    Select
+                  </label>
+                )}
+                <button className="m-modalclose" onClick={() => setTimelineKey('')}>✕</button>
+              </div>
             </div>
             {timelineProperty && (
               <div className="m-modalproperty">
@@ -792,25 +800,11 @@ function SearchTab({ token }) {
 }
 
 // ---- Google Map with status-colored pins ----
-function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, onToggleSelect }) {
+function MarketMap({ rows, mode, isStarred, onMarkerClick }) {
   const ref = useRef(null);
   const [status, setStatus] = useState('loading'); // loading | ok | nocoords | noauth
 
   const pts = rows.filter((r) => r.lat && r.lng);
-
-  // The main map-build effect deliberately doesn't depend on `selected` (toggling
-  // a selection shouldn't rebuild the map and reset pan/zoom), so its mouseover
-  // closures can't just read the `selected` prop — they'd see a stale snapshot.
-  // A ref kept in sync on every selection change gives them the live value instead.
-  const selectedRef = useRef(selected);
-  useEffect(() => { selectedRef.current = selected; }, [selected]);
-
-  // Bridge for the plain-HTML InfoWindow content to call back into React without
-  // rebuilding the whole map (selection shouldn't reset pan/zoom or reload markers).
-  useEffect(() => {
-    window.__mdToggleSelect = (groupKey) => onToggleSelect(groupKey);
-    return () => { delete window.__mdToggleSelect; };
-  }, [onToggleSelect]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -868,21 +862,17 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, onToggleSel
             position: pos, map, title: r.address,
             icon: { path: g.SymbolPath.CIRCLE, scale: starred ? 11 : 8, fillColor: starred ? GOLD : color, fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 },
           });
-          // Hover shows a quick preview (with a select-toggle button bridged back
-          // into React); click opens the full history modal, same as a table row.
+          // Hover shows a quick preview; click opens the full history modal
+          // (same action a table row's click does — including selection, now
+          // handled there instead of a fiddly button embedded in this popup).
           marker.addListener('mouseover', () => {
             const price = fmtMoney(mode === 'prospects' ? r.last_list_price : r.orig_list_price);
-            const isSel = selectedRef.current.has(r.group_key);
-            const gkEscaped = (r.group_key || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
             info.setContent(
               '<div style="font-family:Jost,sans-serif;max-width:220px;color:#1c2b33">' +
               '<div style="font-weight:700;font-size:15px">' + (r.address || '') + '</div>' +
               '<div style="font-size:14px;font-weight:600;margin:2px 0 4px">' + price + '</div>' +
               '<div style="font-size:12px;color:#6a7a82">' + [rowStatus, r.subdivision || r.neighborhood].filter(Boolean).join(' · ') + '</div>' +
               (r.tag ? '<div style="font-size:11.5px;color:#296190;margin-top:4px">#' + r.tag + '</div>' : '') +
-              '<button onclick="window.__mdToggleSelect && window.__mdToggleSelect(\'' + gkEscaped + '\')" style="margin-top:8px;padding:4px 10px;font-size:11.5px;font-weight:600;border-radius:5px;cursor:pointer;' +
-                (isSel ? 'background:#296190;color:#fff;border:1px solid #296190;' : 'background:#fff;color:#4a5a62;border:1px solid #d5dbdf;') +
-              '">' + (isSel ? '☑ Selected' : '☐ Select') + '</button>' +
               '</div>'
             );
             info.open(map, marker);
@@ -1023,6 +1013,9 @@ const css = `
   .m-modal { background: #fff; border-radius: 10px; width: 100%; max-width: 560px; max-height: 80vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.3); }
   .m-modalhead { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid #e6e9ec; font-weight: 600; gap: 10px; }
   .m-modalclose { background: none; border: 0; cursor: pointer; font-size: 16px; color: #6a7a82; }
+  .m-modalright { display: flex; align-items: center; gap: 12px; }
+  .m-modalselect { display: flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 600; color: #4a5a62; cursor: pointer; user-select: none; }
+  .m-modalselect input { cursor: pointer; }
   .m-modalnav { display: flex; gap: 6px; }
   .m-navbtn { background: none; border: 1px solid #d5dbdf; border-radius: 6px; padding: 5px 10px; font-family: 'Jost',sans-serif; font-size: 12px; font-weight: 600; color: #4a5a62; cursor: pointer; }
   .m-navbtn:hover:not(:disabled) { border-color: #296190; color: #296190; }
