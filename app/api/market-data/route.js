@@ -262,6 +262,16 @@ export async function GET(request) {
       return NextResponse.json({ ok: true, listings: data || [] });
     }
 
+    // Distinct property sub types actually present in the data, so Search can
+    // offer them as options instead of free text that has to match exactly.
+    if (url.searchParams.get('sub_types') === '1') {
+      const { data, error } = await fetchAllPaginated(() => supabaseAdmin.from('mls_listings').select('property_sub_type').not('property_sub_type', 'is', null));
+      if (error) return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 });
+      const seen = new Set();
+      for (const r of data || []) { const v = (r.property_sub_type || '').trim(); if (v) seen.add(v); }
+      return NextResponse.json({ ok: true, sub_types: Array.from(seen).sort() });
+    }
+
     // All saved lists, with item counts.
     if (url.searchParams.get('lists') === '1') {
       const { data: lists, error } = await supabaseAdmin.from('mls_lists').select('*').order('updated_at', { ascending: false });
@@ -360,7 +370,7 @@ export async function GET(request) {
         if (sqftMin) q = q.gte('living_area', Number(sqftMin));
         if (sqftMax) q = q.lte('living_area', Number(sqftMax));
         if (beds) q = q.gte('beds_total', Number(beds));
-        if (subType) q = q.ilike('property_sub_type', `%${escLike(subType)}%`);
+        if (subType) q = q.eq('property_sub_type', subType);
         if (tagFilter) q = q.ilike('tag', `%${escLike(tagFilter)}%`);
         if (listGroupKeys) q = q.in('group_key', listGroupKeys);
         return q.order('last_off_market_date', { ascending: false });
@@ -388,7 +398,7 @@ export async function GET(request) {
       if (sqftMin) q = q.gte('living_area', Number(sqftMin));
       if (sqftMax) q = q.lte('living_area', Number(sqftMax));
       if (beds) q = q.gte('beds_total', Number(beds));
-      if (subType) q = q.ilike('property_sub_type', `%${escLike(subType)}%`);
+      if (subType) q = q.eq('property_sub_type', subType);
       if (tagFilter) q = q.ilike('tag', `%${escLike(tagFilter)}%`);
       if (listGroupKeys) q = q.in('group_key', listGroupKeys);
       return q.order('uploaded_at', { ascending: false });

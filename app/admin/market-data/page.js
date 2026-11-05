@@ -382,6 +382,17 @@ function SearchTab({ token }) {
   };
   useEffect(() => { loadLists(); }, []);
 
+  const [subTypeOptions, setSubTypeOptions] = useState([]);
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/market-data?sub_types=1', { headers: { Authorization: 'Bearer ' + token() } });
+        const j = await res.json();
+        if (j.ok) setSubTypeOptions(j.sub_types || []);
+      } catch {}
+    })();
+  }, []);
+
   const toggleSelect = (groupKey) => {
     setSelected((s) => {
       const next = new Set(s);
@@ -578,7 +589,10 @@ function SearchTab({ token }) {
         <input type="number" placeholder="Min sqft" value={sqftMin} onChange={(e) => setSqftMin(e.target.value)} />
         <input type="number" placeholder="Max sqft" value={sqftMax} onChange={(e) => setSqftMax(e.target.value)} />
         <input type="number" placeholder="Beds (min)" value={beds} onChange={(e) => setBeds(e.target.value)} />
-        <input placeholder="Property sub type…" value={subType} onChange={(e) => setSubType(e.target.value)} />
+        <select value={subType} onChange={(e) => setSubType(e.target.value)}>
+          <option value="">Any property type</option>
+          {subTypeOptions.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
         <select value={listFilter} onChange={(e) => setListFilter(e.target.value)}>
           <option value="">Any list</option>
           {lists.map((l) => <option key={l.id} value={l.id}>{l.name} ({l.item_count})</option>)}
