@@ -328,7 +328,9 @@ export async function GET(request) {
     const prospectsOnly = url.searchParams.get('prospects_only') !== '0'; // default true
     const community = (url.searchParams.get('community') || '').trim();
     const address = (url.searchParams.get('address') || '').trim();
-    const status = (url.searchParams.get('status') || 'all').trim();
+    // Comma-separated — any of several statuses/types/lists at once. Empty means no filter.
+    const splitCsv = (v) => (v || '').trim().split(',').map((s) => s.trim()).filter(Boolean);
+    const statuses = splitCsv(url.searchParams.get('status'));
     const offFrom = url.searchParams.get('off_from') || '';
     const offTo = url.searchParams.get('off_to') || '';
     const priceMin = url.searchParams.get('price_min') || '';
@@ -336,19 +338,19 @@ export async function GET(request) {
     const sqftMin = url.searchParams.get('sqft_min') || '';
     const sqftMax = url.searchParams.get('sqft_max') || '';
     const beds = url.searchParams.get('beds') || '';
-    const subType = (url.searchParams.get('sub_type') || '').trim();
+    const subTypes = splitCsv(url.searchParams.get('sub_type'));
     const tagFilter = (url.searchParams.get('tag') || '').trim();
-    const filterListId = (url.searchParams.get('filter_list_id') || '').trim();
+    const filterListIds = splitCsv(url.searchParams.get('filter_list_id'));
     // Strip characters that are special in PostgREST's .or() mini-syntax so a
     // comma/paren in a search box can't break or smuggle extra filter clauses.
     const escLike = (s) => s.replace(/[,()]/g, '');
 
-    // Resolve "search within this list" to its group_keys up front, once, so
-    // both search modes can just .in() against them.
+    // Resolve "search within any of these lists" to a union of group_keys up
+    // front, once, so both search modes can just .in() against them.
     let listGroupKeys = null;
-    if (filterListId) {
-      const { data: items } = await fetchAllPaginated(() => supabaseAdmin.from('mls_list_items').select('group_key').eq('list_id', filterListId));
-      listGroupKeys = (items || []).map((i) => i.group_key);
+    if (filterListIds.length) {
+      const { data: items } = await fetchAllPaginated(() => supabaseAdmin.from('mls_list_items').select('group_key').in('list_id', filterListIds));
+      listGroupKeys = [...new Set((items || []).map((i) => i.group_key))];
       if (listGroupKeys.length === 0) {
         return NextResponse.json({ ok: true, rows: [], mode: prospectsOnly ? 'prospects' : 'all' });
       }
@@ -362,7 +364,7 @@ export async function GET(request) {
         let q = supabaseAdmin.from('mls_prospects').select(fields.join(','));
         if (community) q = q.or(`subdivision.ilike.%${escLike(community)}%,neighborhood.ilike.%${escLike(community)}%,mls_area.ilike.%${escLike(community)}%`);
         if (address) q = q.ilike('address', `%${escLike(address)}%`);
-        if (status !== 'all') q = q.eq('last_status', status);
+        if (statuses.length) q = q.in('last_status', statuses);
         if (offFrom) q = q.gte('last_off_market_date', offFrom);
         if (offTo) q = q.lte('last_off_market_date', offTo);
         if (priceMin) q = q.gte('last_list_price', Number(priceMin));
@@ -370,7 +372,7 @@ export async function GET(request) {
         if (sqftMin) q = q.gte('living_area', Number(sqftMin));
         if (sqftMax) q = q.lte('living_area', Number(sqftMax));
         if (beds) q = q.gte('beds_total', Number(beds));
-        if (subType) q = q.eq('property_sub_type', subType);
+        if (subTypes.length) q = q.in('property_sub_type', subTypes);
         if (tagFilter) q = q.ilike('tag', `%${escLike(tagFilter)}%`);
         if (listGroupKeys) q = q.in('group_key', listGroupKeys);
         return q.order('last_off_market_date', { ascending: false });
@@ -390,7 +392,7 @@ export async function GET(request) {
       let q = supabaseAdmin.from('mls_listings').select('*');
       if (community) q = q.or(`subdivision.ilike.%${escLike(community)}%,neighborhood.ilike.%${escLike(community)}%,mls_area.ilike.%${escLike(community)}%`);
       if (address) q = q.ilike('address', `%${escLike(address)}%`);
-      if (status !== 'all') q = q.eq('status_normalized', status);
+      if (statuses.length) q = q.in('status_normalized', statuses);
       if (offFrom) q = q.gte('off_market_date', offFrom);
       if (offTo) q = q.lte('off_market_date', offTo);
       if (priceMin) q = q.gte('orig_list_price', Number(priceMin));
@@ -398,7 +400,7 @@ export async function GET(request) {
       if (sqftMin) q = q.gte('living_area', Number(sqftMin));
       if (sqftMax) q = q.lte('living_area', Number(sqftMax));
       if (beds) q = q.gte('beds_total', Number(beds));
-      if (subType) q = q.eq('property_sub_type', subType);
+      if (subTypes.length) q = q.in('property_sub_type', subTypes);
       if (tagFilter) q = q.ilike('tag', `%${escLike(tagFilter)}%`);
       if (listGroupKeys) q = q.in('group_key', listGroupKeys);
       return q.order('uploaded_at', { ascending: false });

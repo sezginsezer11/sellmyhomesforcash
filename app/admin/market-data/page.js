@@ -335,13 +335,58 @@ function TypedDateInput({ value, onChange, title }) {
   );
 }
 
+// ===== Multi-select dropdown (checkbox list in a popover) =====
+
+function MultiSelect({ placeholder, options, selected, onChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  const toggle = (val) => {
+    const next = new Set(selected);
+    if (next.has(val)) next.delete(val); else next.add(val);
+    onChange(Array.from(next));
+  };
+
+  const bareLabel = placeholder.replace(/^Any /, '').replace(/^All /, '');
+  const label = selected.length === 0 ? placeholder
+    : selected.length === 1 ? (options.find((o) => o.value === selected[0])?.label || selected[0])
+    : `${bareLabel} (${selected.length})`;
+
+  return (
+    <div className="m-multiselect" ref={ref}>
+      <button type="button" className={'m-multiselectbtn' + (selected.length ? ' on' : '')} onClick={() => setOpen((o) => !o)}>
+        {label}<span className="m-multiselectcaret">▾</span>
+      </button>
+      {open && (
+        <div className="m-multiselectpanel">
+          {options.length === 0 && <div className="m-multiselectempty">No options.</div>}
+          {selected.length > 0 && <button type="button" className="m-multiselectclear" onClick={() => onChange([])}>Clear</button>}
+          {options.map((o) => (
+            <label key={o.value} className="m-multiselectopt">
+              <input type="checkbox" checked={selected.includes(o.value)} onChange={() => toggle(o.value)} />
+              {o.label}
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ===== Search tab =====
 
 function SearchTab({ token }) {
   const [prospectsOnly, setProspectsOnly] = useState(true);
   const [community, setCommunity] = useState('');
   const [address, setAddress] = useState('');
-  const [status, setStatus] = useState('all');
+  const [statuses, setStatuses] = useState([]);
   const [offFrom, setOffFrom] = useState('');
   const [offTo, setOffTo] = useState('');
   const [priceMin, setPriceMin] = useState('');
@@ -349,8 +394,8 @@ function SearchTab({ token }) {
   const [sqftMin, setSqftMin] = useState('');
   const [sqftMax, setSqftMax] = useState('');
   const [beds, setBeds] = useState('');
-  const [subType, setSubType] = useState('');
-  const [listFilter, setListFilter] = useState('');
+  const [subTypes, setSubTypes] = useState([]);
+  const [listFilters, setListFilters] = useState([]);
   const [tagFilter, setTagFilter] = useState('');
   const [rows, setRows] = useState([]);
   const [mode, setMode] = useState('prospects');
@@ -434,13 +479,14 @@ function SearchTab({ token }) {
     setTimeout(() => setAddMsg(''), 3000);
   };
 
-  const runSearch = async () => {
+  const runSearch = async (e) => {
+    if (e) e.preventDefault();
     setLoading(true); setSearched(true);
     const params = new URLSearchParams({
       prospects_only: prospectsOnly ? '1' : '0',
-      status, community, address, off_from: offFrom, off_to: offTo,
+      status: statuses.join(','), community, address, off_from: offFrom, off_to: offTo,
       price_min: priceMin, price_max: priceMax, sqft_min: sqftMin, sqft_max: sqftMax,
-      beds, sub_type: subType, filter_list_id: listFilter, tag: tagFilter,
+      beds, sub_type: subTypes.join(','), filter_list_id: listFilters.join(','), tag: tagFilter,
     });
     try {
       const res = await fetch('/api/market-data?' + params.toString(), { headers: { Authorization: 'Bearer ' + token() } });
@@ -567,14 +613,15 @@ function SearchTab({ token }) {
         <button className={'m-togglebtn' + (!prospectsOnly ? ' on' : '')} onClick={() => setProspectsOnly(false)}>All history</button>
       </div>
 
-      <div className="m-filters">
+      <form className="m-filters" onSubmit={runSearch}>
         <input placeholder="Address…" value={address} onChange={(e) => setAddress(e.target.value)} />
         <input placeholder="Community (subdivision, neighborhood, or area)…" value={community} onChange={(e) => setCommunity(e.target.value)} />
-        <select value={status} onChange={(e) => setStatus(e.target.value)}>
-          <option value="all">All statuses</option>
-          {STATUSES.map((s) => <option key={s} value={s}>{s[0].toUpperCase() + s.slice(1)}</option>)}
-          {!prospectsOnly && <><option value="active">Active</option><option value="pending">Pending</option><option value="sold">Sold</option><option value="unknown">Unknown</option></>}
-        </select>
+        <MultiSelect
+          placeholder="All statuses"
+          options={(prospectsOnly ? STATUSES : [...STATUSES, 'active', 'pending', 'sold', 'unknown']).map((s) => ({ value: s, label: s[0].toUpperCase() + s.slice(1) }))}
+          selected={statuses}
+          onChange={setStatuses}
+        />
         <div className="m-datefield">
           <span className="m-datelabel">Off-market date</span>
           <div className="m-daterange">
@@ -589,18 +636,22 @@ function SearchTab({ token }) {
         <input type="number" placeholder="Min sqft" value={sqftMin} onChange={(e) => setSqftMin(e.target.value)} />
         <input type="number" placeholder="Max sqft" value={sqftMax} onChange={(e) => setSqftMax(e.target.value)} />
         <input type="number" placeholder="Beds (min)" value={beds} onChange={(e) => setBeds(e.target.value)} />
-        <select value={subType} onChange={(e) => setSubType(e.target.value)}>
-          <option value="">Any property type</option>
-          {subTypeOptions.map((t) => <option key={t} value={t}>{t}</option>)}
-        </select>
-        <select value={listFilter} onChange={(e) => setListFilter(e.target.value)}>
-          <option value="">Any list</option>
-          {lists.map((l) => <option key={l.id} value={l.id}>{l.name} ({l.item_count})</option>)}
-        </select>
+        <MultiSelect
+          placeholder="Any property type"
+          options={subTypeOptions.map((t) => ({ value: t, label: t }))}
+          selected={subTypes}
+          onChange={setSubTypes}
+        />
+        <MultiSelect
+          placeholder="Any list"
+          options={lists.map((l) => ({ value: l.id, label: `${l.name} (${l.item_count})` }))}
+          selected={listFilters}
+          onChange={setListFilters}
+        />
         <input placeholder="Tag…" value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} />
-        <button className="m-searchbtn" onClick={runSearch} disabled={loading}>{loading ? 'Searching…' : 'Search'}</button>
-        {searched && rows.length > 0 && <button className="m-exportbtn" onClick={exportCSV}>Export CSV</button>}
-      </div>
+        <button type="submit" className="m-searchbtn" disabled={loading}>{loading ? 'Searching…' : 'Search'}</button>
+        {searched && rows.length > 0 && <button type="button" className="m-exportbtn" onClick={exportCSV}>Export CSV</button>}
+      </form>
 
       {searched && (
         <div className="m-resultswrap">
@@ -945,6 +996,16 @@ const css = `
   .m-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; align-items: center; }
   .m-filters input, .m-filters select { padding: 9px 11px; border: 1px solid #d5dbdf; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13.5px; background: #fff; }
   .m-filters input[placeholder*="Address"], .m-filters input[placeholder*="Community"] { flex: 1; min-width: 180px; }
+  .m-multiselect { position: relative; }
+  .m-multiselectbtn { display: flex; align-items: center; gap: 6px; padding: 9px 11px; border: 1px solid #d5dbdf; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13.5px; background: #fff; color: #1c2b33; cursor: pointer; white-space: nowrap; }
+  .m-multiselectbtn.on { border-color: #296190; color: #296190; background: #eaf2fa; }
+  .m-multiselectcaret { font-size: 10px; color: #9aa4ab; }
+  .m-multiselectpanel { position: absolute; top: calc(100% + 4px); left: 0; z-index: 10; min-width: 200px; max-height: 260px; overflow-y: auto; background: #fff; border: 1px solid #d5dbdf; border-radius: 8px; box-shadow: 0 8px 24px rgba(20,40,60,.14); padding: 6px; display: flex; flex-direction: column; }
+  .m-multiselectopt { display: flex; align-items: center; gap: 8px; padding: 7px 8px; font-size: 13px; color: #1c2b33; cursor: pointer; border-radius: 5px; white-space: nowrap; }
+  .m-multiselectopt:hover { background: #f5f9fc; }
+  .m-multiselectopt input { cursor: pointer; }
+  .m-multiselectclear { align-self: flex-end; background: none; border: 0; color: #296190; font-family: 'Jost',sans-serif; font-size: 11.5px; font-weight: 600; cursor: pointer; padding: 2px 6px; margin-bottom: 2px; }
+  .m-multiselectempty { padding: 8px; font-size: 12.5px; color: #9aa4ab; }
   .m-datefield { display: flex; flex-direction: column; gap: 3px; }
   .m-datelabel { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #8a9aa2; }
   .m-daterange { display: flex; align-items: center; gap: 6px; }
