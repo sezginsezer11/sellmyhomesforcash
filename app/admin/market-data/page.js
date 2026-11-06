@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { supabaseBrowser } from '../../../lib/supabase-browser';
+import { pointInRing } from '../../../lib/kml';
 
 const STATUSES = ['expired', 'canceled', 'withdrawn'];
 const fmtMoney = (v) => (v == null ? '—' : '$' + Number(v).toLocaleString());
@@ -565,6 +566,7 @@ function SearchTab({ token }) {
   const [searched, setSearched] = useState(false);
   const [sort, setSort] = useState({ key: null, dir: 1 });
   const [view, setView] = useState('table'); // table | map
+  const [drawnArea, setDrawnArea] = useState(null); // [[lng,lat],...] or null
   const [geocoding, setGeocoding] = useState(false);
   const [geoProgress, setGeoProgress] = useState(null); // { done, remaining }
   const [timelineKey, setTimelineKey] = useState('');
@@ -804,9 +806,18 @@ function SearchTab({ token }) {
     const mlsNumber = rowMlsNumber(r);
     setRows((rs) => rs.map((x) => (rowMlsNumber(x) === mlsNumber ? { ...x, tag } : x)));
   };
-  const sortedRows = useMemo(() => {
-    if (!sort.key) return rows;
-    const arr = rows.slice();
+  // A polygon drawn on the map (array of [lng,lat]) narrows the result set to
+  // whatever falls inside it — table, map, export, and the result count all
+  // reflect it. The map itself still shows every pin for context; only the
+  // list of results is filtered.
+  const areaRows = useMemo(() => {
+    if (!drawnArea) return rows;
+    return rows.filter((r) => r.lat && r.lng && pointInRing(Number(r.lng), Number(r.lat), drawnArea));
+  }, [rows, drawnArea]);
+
+  const sortRows = (list) => {
+    if (!sort.key) return list;
+    const arr = list.slice();
     arr.sort((a, b) => {
       const va = sortKeyVal(a, sort.key), vb = sortKeyVal(b, sort.key);
       if (va < vb) return -1 * sort.dir;
@@ -814,14 +825,18 @@ function SearchTab({ token }) {
       return 0;
     });
     return arr;
-  }, [rows, sort, mode]);
+  };
+  // The table/export/count reflect the drawn-area filter; the map always gets
+  // every row (sortedAllRows) so drawing/clearing an area never rebuilds it.
+  const sortedRows = useMemo(() => sortRows(areaRows), [areaRows, sort, mode]);
+  const sortedAllRows = useMemo(() => sortRows(rows), [rows, sort, mode]);
 
   const exportCSV = () => {
     const cols = mode === 'prospects'
       ? ['address', 'community_name', 'subdivision', 'neighborhood', 'mls_area', 'property_sub_type', 'beds_total', 'baths_total', 'living_area', 'last_status', 'last_list_price', 'original_list_price', 'last_off_market_date', 'days_since_off_market', 'total_listings', 'times_listed_without_selling']
       : ['address', 'community_name', 'subdivision', 'neighborhood', 'mls_area', 'property_sub_type', 'beds_total', 'baths_total', 'living_area', 'status_normalized', 'orig_list_price', 'current_price', 'close_price', 'listing_contract_date', 'off_market_date', 'close_date', 'mls_number'];
     const esc = (v) => '"' + (v == null ? '' : String(v).replace(/"/g, '""')) + '"';
-    const csv = [cols.join(',')].concat(rows.map((r) => cols.map((c) => esc(r[c])).join(','))).join('\n');
+    const csv = [cols.join(',')].concat(areaRows.map((r) => cols.map((c) => esc(r[c])).join(','))).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -902,14 +917,22 @@ function SearchTab({ token }) {
         />
         <input placeholder="Tag…" value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} />
         <button type="submit" className="m-searchbtn" disabled={loading}>{loading ? 'Searching…' : 'Search'}</button>
-        <button type="button" className="m-resetbtn" onClick={resetFilters}>Reset</button>
-        {searched && rows.length > 0 && <button type="button" className="m-exportbtn" onClick={exportCSV}>Export CSV</button>}
+        <button type="button" className="m-resetbtn" onClick={() => { resetFilters(); setDrawnArea(null); }}>Reset</button>
+        {searched && areaRows.length > 0 && <button type="button" className="m-exportbtn" onClick={exportCSV}>Export CSV</button>}
       </form>
 
       {searched && (
         <div className="m-resultswrap">
           <div className="m-resultbar">
-            <div className="m-resultcount">{rows.length} result{rows.length === 1 ? '' : 's'}</div>
+            <div className="m-resultcount">
+              {areaRows.length} result{areaRows.length === 1 ? '' : 's'}
+              {drawnArea && (
+                <span className="m-areachip">
+                  within drawn area
+                  <button type="button" onClick={() => setDrawnArea(null)} title="Clear drawn area">✕</button>
+                </span>
+              )}
+            </div>
             <div className="m-viewtoggle">
               <button className={'m-viewbtn' + (view === 'table' ? ' on' : '')} onClick={() => setView('table')}>Table</button>
               <button className={'m-viewbtn' + (view === 'map' ? ' on' : '')} onClick={() => setView('map')}>Map</button>
@@ -963,7 +986,12 @@ function SearchTab({ token }) {
           )}
 
           {view === 'map' ? (
-            <MarketMap rows={sortedRows} mode={mode} isStarred={isStarred} onMarkerClick={openTimeline} selected={selected} toggleSelect={toggleSelect} />
+            <MarketMap
+              rows={sortedAllRows} mode={mode} isStarred={isStarred}
+              onMarkerClick={(groupKey) => openTimeline(groupKey, sortedRows.findIndex((x) => x.group_key === groupKey))}
+              selected={selected} toggleSelect={toggleSelect}
+              drawnArea={drawnArea} onAreaChange={setDrawnArea}
+            />
           ) : (
           <div className="m-tablewrap">
             <table className="m-table">
@@ -985,7 +1013,7 @@ function SearchTab({ token }) {
                 </tr>
               </thead>
               <tbody>
-                {rows.length === 0 && <tr><td colSpan={11} className="m-empty">No matches.</td></tr>}
+                {sortedRows.length === 0 && <tr><td colSpan={11} className="m-empty">No matches.</td></tr>}
                 {mode === 'prospects' ? sortedRows.map((r, i) => (
                   <tr key={r.group_key} onClick={() => openTimeline(r.group_key, i)} className="m-clickrow">
                     <td className="m-checkcol" onClick={(e) => e.stopPropagation()}>
@@ -1133,9 +1161,10 @@ function SearchTab({ token }) {
 }
 
 // ---- Google Map with status-colored pins ----
-function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelect }) {
+function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelect, drawnArea, onAreaChange }) {
   const ref = useRef(null);
   const [status, setStatus] = useState('loading'); // loading | ok | nocoords | noauth
+  const [drawingActive, setDrawingActive] = useState(false);
 
   // Read via refs inside the map effect below, which intentionally doesn't
   // rebuild on every selection toggle (that would reset pan/zoom each click).
@@ -1148,6 +1177,35 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelec
   const builtRef = useRef(false);
   const toggleSelectRef = useRef(toggleSelect);
   useEffect(() => { toggleSelectRef.current = toggleSelect; }, [toggleSelect]);
+  const onAreaChangeRef = useRef(onAreaChange);
+  useEffect(() => { onAreaChangeRef.current = onAreaChange; }, [onAreaChange]);
+  // The drawing manager + the currently-shown search-area polygon persist
+  // across draws/clears independent of the main map-build effect below (which
+  // never reruns for area changes — rows/mode are the only real triggers).
+  const drawingManagerRef = useRef(null);
+  const committedPolygonRef = useRef(null);
+  const mapObjRef = useRef(null);
+
+  const startDrawing = () => {
+    if (!drawingManagerRef.current || typeof window === 'undefined') return;
+    setDrawingActive(true);
+    drawingManagerRef.current.setDrawingMode(window.google.maps.drawing.OverlayType.POLYGON);
+  };
+  const clearArea = () => {
+    if (committedPolygonRef.current) { committedPolygonRef.current.setMap(null); committedPolygonRef.current = null; }
+    drawingManagerRef.current?.setDrawingMode(null);
+    setDrawingActive(false);
+    onAreaChangeRef.current?.(null);
+  };
+  // Clearing the area from outside the map (the result bar's chip) still
+  // needs to remove this component's own polygon overlay.
+  useEffect(() => {
+    if (!drawnArea && committedPolygonRef.current) {
+      committedPolygonRef.current.setMap(null);
+      committedPolygonRef.current = null;
+      setDrawingActive(false);
+    }
+  }, [drawnArea]);
 
   // Multiple units in the same building (e.g. a condo complex) all geocode to
   // the same street-level point, which stacks their pins exactly on top of
@@ -1237,6 +1295,7 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelec
         await ensureLoader();
         const { Map, InfoWindow } = await window.google.maps.importLibrary('maps');
         const { Marker } = await window.google.maps.importLibrary('marker');
+        const { DrawingManager } = await window.google.maps.importLibrary('drawing');
         const refReady = await waitForRef();
         if (cancelled || !refReady || !ref.current || builtRef.current) return;
         builtRef.current = true;
@@ -1244,6 +1303,7 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelec
         const map = new Map(ref.current, {
           mapTypeId: 'roadmap', mapTypeControl: true, streetViewControl: false, fullscreenControl: true,
         });
+        mapObjRef.current = map;
         const bounds = new g.LatLngBounds();
         const info = new InfoWindow();
         // The InfoWindow's content is a raw HTML string, so its checkbox needs
@@ -1287,10 +1347,36 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelec
             );
             info.open(map, marker);
           });
-          marker.addListener('click', () => onMarkerClick(r.group_key, rows.findIndex((x) => x.group_key === r.group_key)));
+          marker.addListener('click', () => onMarkerClick(r.group_key));
         });
         map.fitBounds(bounds, 60);
         g.event.addListenerOnce(map, 'idle', () => { if (pts.length === 1) map.setZoom(15); });
+
+        // "Draw search area" — the drawn polygon narrows the table/export/count
+        // (handled by the parent via onAreaChange); the map keeps showing every
+        // pin for context, so this never needs to rebuild the map itself.
+        const drawingManager = new DrawingManager({
+          drawingMode: null,
+          drawingControl: false,
+          polygonOptions: { fillColor: '#296190', fillOpacity: 0.12, strokeColor: '#296190', strokeWeight: 2, clickable: false, editable: true, zIndex: 5 },
+        });
+        drawingManager.setMap(map);
+        drawingManagerRef.current = drawingManager;
+        g.event.addListener(drawingManager, 'polygoncomplete', (polygon) => {
+          if (committedPolygonRef.current) { committedPolygonRef.current.setMap(null); }
+          committedPolygonRef.current = polygon;
+          drawingManager.setDrawingMode(null);
+          setDrawingActive(false);
+          const emitArea = () => {
+            const ring = polygon.getPath().getArray().map((ll) => [ll.lng(), ll.lat()]);
+            onAreaChangeRef.current?.(ring);
+          };
+          emitArea();
+          g.event.addListener(polygon.getPath(), 'set_at', emitArea);
+          g.event.addListener(polygon.getPath(), 'insert_at', emitArea);
+          g.event.addListener(polygon.getPath(), 'remove_at', emitArea);
+        });
+
         if (!cancelled) setStatus('ok');
       } catch (e) {
         console.error('market map load error', e);
@@ -1303,6 +1389,20 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelec
 
   return (
     <div className="m-mapwrap">
+      {status === 'ok' && (
+        <div className="m-drawctrl">
+          {drawingActive ? (
+            <>
+              <span className="m-drawhint">Click points to outline an area, double-click to finish</span>
+              <button type="button" className="m-drawbtn" onClick={() => { drawingManagerRef.current?.setDrawingMode(null); setDrawingActive(false); }}>Cancel</button>
+            </>
+          ) : drawnArea ? (
+            <button type="button" className="m-drawbtn" onClick={clearArea}>Clear drawn area</button>
+          ) : (
+            <button type="button" className="m-drawbtn" onClick={startDrawing}>Draw search area</button>
+          )}
+        </div>
+      )}
       <div ref={ref} className="m-map" style={{ display: status === 'ok' || status === 'loading' ? 'block' : 'none' }} />
       {status === 'nocoords' && <div className="m-mapmsg">None of these results have map coordinates yet. Click "Geocode all addresses" above.</div>}
       {status === 'noauth' && <div className="m-mapmsg">The map could not load — check the Google Maps key and billing.</div>}
@@ -1375,6 +1475,8 @@ const css = `
 
   .m-resultbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
   .m-resultcount { font-size: 13px; color: #6a7a82; }
+  .m-areachip { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; background: #eaf2fa; color: #296190; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 12px; }
+  .m-areachip button { background: none; border: 0; color: #296190; cursor: pointer; font-size: 12px; padding: 0; line-height: 1; }
   .m-viewtoggle { display: flex; gap: 4px; background: #eef1f3; border-radius: 8px; padding: 3px; }
   .m-viewbtn { padding: 6px 14px; border: 0; background: none; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 12.5px; font-weight: 600; color: #6a7a82; cursor: pointer; }
   .m-viewbtn.on { background: #fff; color: #296190; box-shadow: 0 1px 3px rgba(20,40,60,.12); }
@@ -1382,7 +1484,11 @@ const css = `
   .m-geocodebtn { padding: 7px 14px; background: #296190; color: #fff; border: 0; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap; }
   .m-geocodebtn:disabled { opacity: .55; cursor: default; }
   .m-kmlrow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-  .m-mapwrap { border: 1px solid #e6e9ec; border-radius: 8px; overflow: hidden; background: #fff; }
+  .m-mapwrap { position: relative; border: 1px solid #e6e9ec; border-radius: 8px; overflow: hidden; background: #fff; }
+  .m-drawctrl { position: absolute; top: 10px; left: 10px; z-index: 6; display: flex; align-items: center; gap: 8px; background: #fff; border-radius: 6px; box-shadow: 0 2px 8px rgba(20,40,60,.18); padding: 6px 8px; }
+  .m-drawbtn { padding: 7px 13px; background: #296190; color: #fff; border: 0; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .m-drawbtn:hover { background: #21506f; }
+  .m-drawhint { font-size: 12px; color: #4a5a62; white-space: nowrap; }
   .m-map { width: 100%; height: 520px; }
   .m-mapmsg { padding: 40px 20px; text-align: center; color: #6a7a82; font-size: 13.5px; }
   .m-tablewrap { overflow-x: auto; border: 1px solid #e6e9ec; border-radius: 8px; background: #fff; box-shadow: 0 4px 16px rgba(20,40,60,.04); }
