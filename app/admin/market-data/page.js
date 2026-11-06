@@ -1241,6 +1241,21 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelec
   // re-materialized on the new map instead of visually disappearing.
   const drawnAreaRef = useRef(drawnArea);
   useEffect(() => { drawnAreaRef.current = drawnArea; }, [drawnArea]);
+  // Every marker currently on the map, so a drawn/edited/cleared area can
+  // show/hide pins by toggling marker.setMap(...) instead of rebuilding the
+  // whole map (which would reset pan/zoom and kill the in-progress polygon).
+  const markersRef = useRef([]);
+  const applyAreaFilter = () => {
+    const map = mapObjRef.current;
+    if (!map) return;
+    const area = drawnAreaRef.current;
+    for (const { marker, lat, lng } of markersRef.current) {
+      const visible = !area || area.length < 3 || pointInRing(lng, lat, area);
+      marker.setMap(visible ? map : null);
+    }
+  };
+  // Re-apply whenever the drawn area is set, edited, or cleared.
+  useEffect(() => { applyAreaFilter(); }, [drawnArea]);
   // Google removed DrawingManager from the Maps JS API (v3.65+), so the
   // search-area polygon is built by hand: a plain Polygon whose path grows on
   // each map click, finished by the "Finish area" button. The polygon itself
@@ -1421,6 +1436,7 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelec
           cb.checked = selectedRef.current.has(currentRow.group_key);
           cb.onclick = (e) => { e.stopPropagation(); toggleSelectRef.current(currentRow.group_key); };
         });
+        markersRef.current = [];
         pts.forEach((r) => {
           const pos = { lat: r._lat, lng: r._lng };
           bounds.extend(pos);
@@ -1431,6 +1447,7 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelec
             position: pos, map, title: r.address,
             icon: { path: g.SymbolPath.CIRCLE, scale: starred ? 11 : 8, fillColor: starred ? GOLD : color, fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 },
           });
+          markersRef.current.push({ marker, lat: r._lat, lng: r._lng });
           // Hover shows a quick preview with a select checkbox (handy for
           // building a list straight off the map); click opens the full
           // history modal, same as a table row's click.
@@ -1482,6 +1499,7 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelec
           g.event.addListener(polygon.getPath(), 'insert_at', emitArea);
           g.event.addListener(polygon.getPath(), 'remove_at', emitArea);
         }
+        applyAreaFilter();
 
         if (!cancelled) setStatus('ok');
       } catch (e) {
