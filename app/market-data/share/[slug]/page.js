@@ -148,12 +148,27 @@ function SharedMap({ rows, highlightKey, onPinClick }) {
       setTimeout(() => { clearInterval(check); if (!(window.google && window.google.maps && window.google.maps.importLibrary)) reject(Error('timeout')); }, 8000);
     });
 
+    // The container div is always mounted, but on some production loads its
+    // ref hasn't committed yet by the time these awaits resolve — seen live
+    // as "Expected mapDiv ... but was passed undefined." Poll briefly for it
+    // instead of giving up on the first check.
+    const waitForRef = () => new Promise((resolve) => {
+      if (ref.current) { resolve(true); return; }
+      let tries = 0;
+      const iv = setInterval(() => {
+        tries++;
+        if (ref.current) { clearInterval(iv); resolve(true); }
+        else if (tries > 40) { clearInterval(iv); resolve(false); }
+      }, 50);
+    });
+
     (async () => {
       try {
         await ensureLoader();
         const { Map, InfoWindow } = await window.google.maps.importLibrary('maps');
         const { Marker } = await window.google.maps.importLibrary('marker');
-        if (cancelled || !ref.current) return;
+        const refReady = await waitForRef();
+        if (cancelled || !refReady || !ref.current) return;
         const g = window.google.maps;
         const map = new Map(ref.current, { mapTypeId: 'roadmap', mapTypeControl: true, streetViewControl: false, fullscreenControl: true });
         mapRef.current = map;
