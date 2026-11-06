@@ -13,6 +13,10 @@ const STATUS_COLOR = {
 };
 const MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY;
 const GOLD = '#e0a800';
+// Carmel Valley — used to center the map before any search has run (or when
+// nothing in the current results is plottable), so there's still a useful
+// map to draw a search area on.
+const DEFAULT_CENTER = { lat: 32.9435, lng: -117.2297 };
 
 // Zillow resolves straight to the exact listing page when the URL includes
 // city + state (confirmed directly — without them it lands on a generic search
@@ -565,7 +569,7 @@ function SearchTab({ token }) {
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const [sort, setSort] = useState({ key: null, dir: 1 });
-  const [view, setView] = useState('table'); // table | map
+  const [view, setView] = useState('map'); // table | map
   const [drawnArea, setDrawnArea] = useState(null); // [[lng,lat],...] or null
   const [geocoding, setGeocoding] = useState(false);
   const [geoProgress, setGeoProgress] = useState(null); // { done, remaining }
@@ -957,11 +961,10 @@ function SearchTab({ token }) {
         {searched && areaRows.length > 0 && <button type="button" className="m-exportbtn" onClick={exportCSV}>Export CSV</button>}
       </form>
 
-      {searched && (
-        <div className="m-resultswrap">
+      <div className="m-resultswrap">
           <div className="m-resultbar">
             <div className="m-resultcount">
-              {areaRows.length} result{areaRows.length === 1 ? '' : 's'}
+              {searched ? `${areaRows.length} result${areaRows.length === 1 ? '' : 's'}` : 'Draw a search area and/or set filters above, then hit Search'}
               {drawnArea && (
                 <span className="m-areachip">
                   within drawn area
@@ -1028,6 +1031,8 @@ function SearchTab({ token }) {
               selected={selected} toggleSelect={toggleSelect}
               drawnArea={drawnArea} onAreaChange={setDrawnArea}
             />
+          ) : !searched ? (
+            <p className="m-dim">Hit Search to see results in table view.</p>
           ) : (
           <div className="m-tablewrap">
             <table className="m-table">
@@ -1098,7 +1103,6 @@ function SearchTab({ token }) {
           </div>
           )}
         </div>
-      )}
 
       {timelineKey && (
         <div className="m-modalbg" onClick={() => setTimelineKey('')}>
@@ -1215,7 +1219,7 @@ function SearchTab({ token }) {
 // ---- Google Map with status-colored pins ----
 function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelect, drawnArea, onAreaChange }) {
   const ref = useRef(null);
-  const [status, setStatus] = useState('loading'); // loading | ok | nocoords | noauth
+  const [status, setStatus] = useState('loading'); // loading | ok | noauth
   const [drawingActive, setDrawingActive] = useState(false);
   const [drawPointCount, setDrawPointCount] = useState(0);
 
@@ -1232,6 +1236,11 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelec
   useEffect(() => { toggleSelectRef.current = toggleSelect; }, [toggleSelect]);
   const onAreaChangeRef = useRef(onAreaChange);
   useEffect(() => { onAreaChangeRef.current = onAreaChange; }, [onAreaChange]);
+  // Read inside the map-build effect (which can run again after a new search
+  // changes rows, rebuilding the whole map) so an already-drawn area gets
+  // re-materialized on the new map instead of visually disappearing.
+  const drawnAreaRef = useRef(drawnArea);
+  useEffect(() => { drawnAreaRef.current = drawnArea; }, [drawnArea]);
   // Google removed DrawingManager from the Maps JS API (v3.65+), so the
   // search-area polygon is built by hand: a plain Polygon whose path grows on
   // each map click, finished by the "Finish area" button. The polygon itself
@@ -1339,7 +1348,9 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelec
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (!MAPS_KEY) { setStatus('noauth'); return; }
-    if (!pts.length) { setStatus('nocoords'); return; }
+    // No early return for an empty pts list — the map still loads (centered on
+    // the default area below) so a search area can be drawn before any search
+    // has even run, or while nothing geocoded yet matches.
 
     let cancelled = false;
     window.gm_authFailure = () => { if (!cancelled) setStatus('noauth'); };
@@ -1442,8 +1453,36 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelec
           });
           marker.addListener('click', () => onMarkerClick(r.group_key));
         });
-        map.fitBounds(bounds, 60);
-        g.event.addListenerOnce(map, 'idle', () => { if (pts.length === 1) map.setZoom(15); });
+        if (pts.length) {
+          map.fitBounds(bounds, 60);
+          g.event.addListenerOnce(map, 'idle', () => { if (pts.length === 1) map.setZoom(15); });
+        } else {
+          // Nothing to fit to yet (no search run, or nothing plottable) —
+          // center on the general service area so there's still a useful
+          // map to draw a search area on.
+          map.setCenter(DEFAULT_CENTER);
+          map.setZoom(12);
+        }
+
+        // Re-materialize an already-drawn area (e.g. drawn before this search
+        // ran) onto the freshly built map, same editable style as a polygon
+        // that just finished drawing.
+        if (drawnAreaRef.current && drawnAreaRef.current.length >= 3) {
+          const polygon = new g.Polygon({
+            map, paths: drawnAreaRef.current.map(([lng, lat]) => ({ lat, lng })),
+            editable: true, clickable: true,
+            fillColor: '#296190', fillOpacity: 0.12, strokeColor: '#296190', strokeWeight: 2, zIndex: 5,
+          });
+          polygonRef.current = polygon;
+          const emitArea = () => {
+            const ring = polygon.getPath().getArray().map((ll) => [ll.lng(), ll.lat()]);
+            onAreaChangeRef.current?.(ring);
+          };
+          g.event.addListener(polygon.getPath(), 'set_at', emitArea);
+          g.event.addListener(polygon.getPath(), 'insert_at', emitArea);
+          g.event.addListener(polygon.getPath(), 'remove_at', emitArea);
+        }
+
         if (!cancelled) setStatus('ok');
       } catch (e) {
         console.error('market map load error', e);
@@ -1472,7 +1511,6 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelec
         </div>
       )}
       <div ref={ref} className="m-map" style={{ display: status === 'ok' || status === 'loading' ? 'block' : 'none' }} />
-      {status === 'nocoords' && <div className="m-mapmsg">None of these results have map coordinates yet. Click "Geocode all addresses" above.</div>}
       {status === 'noauth' && <div className="m-mapmsg">The map could not load — check the Google Maps key and billing.</div>}
     </div>
   );
