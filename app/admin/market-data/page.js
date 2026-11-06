@@ -1165,7 +1165,7 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelec
   const ref = useRef(null);
   const [status, setStatus] = useState('loading'); // loading | ok | nocoords | noauth
   const [drawingActive, setDrawingActive] = useState(false);
-  const [drawingAvailable, setDrawingAvailable] = useState(false);
+  const [drawPointCount, setDrawPointCount] = useState(0);
 
   // Read via refs inside the map effect below, which intentionally doesn't
   // rebuild on every selection toggle (that would reset pan/zoom each click).
@@ -1180,30 +1180,71 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelec
   useEffect(() => { toggleSelectRef.current = toggleSelect; }, [toggleSelect]);
   const onAreaChangeRef = useRef(onAreaChange);
   useEffect(() => { onAreaChangeRef.current = onAreaChange; }, [onAreaChange]);
-  // The drawing manager + the currently-shown search-area polygon persist
-  // across draws/clears independent of the main map-build effect below (which
-  // never reruns for area changes — rows/mode are the only real triggers).
-  const drawingManagerRef = useRef(null);
-  const committedPolygonRef = useRef(null);
+  // Google removed DrawingManager from the Maps JS API (v3.65+), so the
+  // search-area polygon is built by hand: a plain Polygon whose path grows on
+  // each map click, finished by the "Finish area" button. The polygon itself
+  // persists across draws/clears independent of the main map-build effect
+  // below (which never reruns for area changes — rows/mode are the only
+  // real triggers).
+  const polygonRef = useRef(null);
+  const clickListenerRef = useRef(null);
+  const drawPointsRef = useRef([]);
   const mapObjRef = useRef(null);
 
   const startDrawing = () => {
-    if (!drawingManagerRef.current || typeof window === 'undefined') return;
+    if (!mapObjRef.current || typeof window === 'undefined') return;
+    const g = window.google.maps;
+    if (polygonRef.current) { polygonRef.current.setMap(null); polygonRef.current = null; }
+    drawPointsRef.current = [];
+    setDrawPointCount(0);
     setDrawingActive(true);
-    drawingManagerRef.current.setDrawingMode(window.google.maps.drawing.OverlayType.POLYGON);
+    const map = mapObjRef.current;
+    const polygon = new g.Polygon({
+      map, paths: [], editable: false, clickable: false,
+      fillColor: '#296190', fillOpacity: 0.12, strokeColor: '#296190', strokeWeight: 2, zIndex: 5,
+    });
+    polygonRef.current = polygon;
+    clickListenerRef.current = g.event.addListener(map, 'click', (e) => {
+      drawPointsRef.current.push(e.latLng);
+      polygon.setPath(drawPointsRef.current);
+      setDrawPointCount(drawPointsRef.current.length);
+    });
+  };
+  const cancelDrawing = () => {
+    const g = window.google.maps;
+    if (clickListenerRef.current) { g.event.removeListener(clickListenerRef.current); clickListenerRef.current = null; }
+    if (polygonRef.current) { polygonRef.current.setMap(null); polygonRef.current = null; }
+    drawPointsRef.current = [];
+    setDrawPointCount(0);
+    setDrawingActive(false);
+  };
+  const finishDrawing = () => {
+    const g = window.google.maps;
+    if (clickListenerRef.current) { g.event.removeListener(clickListenerRef.current); clickListenerRef.current = null; }
+    setDrawingActive(false);
+    const polygon = polygonRef.current;
+    if (!polygon || drawPointsRef.current.length < 3) { cancelDrawing(); return; }
+    polygon.setOptions({ editable: true, clickable: true });
+    const emitArea = () => {
+      const ring = polygon.getPath().getArray().map((ll) => [ll.lng(), ll.lat()]);
+      onAreaChangeRef.current?.(ring);
+    };
+    emitArea();
+    g.event.addListener(polygon.getPath(), 'set_at', emitArea);
+    g.event.addListener(polygon.getPath(), 'insert_at', emitArea);
+    g.event.addListener(polygon.getPath(), 'remove_at', emitArea);
   };
   const clearArea = () => {
-    if (committedPolygonRef.current) { committedPolygonRef.current.setMap(null); committedPolygonRef.current = null; }
-    drawingManagerRef.current?.setDrawingMode(null);
+    if (polygonRef.current) { polygonRef.current.setMap(null); polygonRef.current = null; }
     setDrawingActive(false);
     onAreaChangeRef.current?.(null);
   };
   // Clearing the area from outside the map (the result bar's chip) still
   // needs to remove this component's own polygon overlay.
   useEffect(() => {
-    if (!drawnArea && committedPolygonRef.current) {
-      committedPolygonRef.current.setMap(null);
-      committedPolygonRef.current = null;
+    if (!drawnArea && polygonRef.current) {
+      polygonRef.current.setMap(null);
+      polygonRef.current = null;
       setDrawingActive(false);
     }
   }, [drawnArea]);
@@ -1352,38 +1393,6 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelec
         map.fitBounds(bounds, 60);
         g.event.addListenerOnce(map, 'idle', () => { if (pts.length === 1) map.setZoom(15); });
         if (!cancelled) setStatus('ok');
-
-        // "Draw search area" is isolated in its own try/catch — if the drawing
-        // library fails to load for any reason, the map above still works;
-        // only the draw button itself silently stays unavailable.
-        try {
-          const { DrawingManager } = await window.google.maps.importLibrary('drawing');
-          if (cancelled) return;
-          const drawingManager = new DrawingManager({
-            drawingMode: null,
-            drawingControl: false,
-            polygonOptions: { fillColor: '#296190', fillOpacity: 0.12, strokeColor: '#296190', strokeWeight: 2, clickable: false, editable: true, zIndex: 5 },
-          });
-          drawingManager.setMap(map);
-          drawingManagerRef.current = drawingManager;
-          g.event.addListener(drawingManager, 'polygoncomplete', (polygon) => {
-            if (committedPolygonRef.current) { committedPolygonRef.current.setMap(null); }
-            committedPolygonRef.current = polygon;
-            drawingManager.setDrawingMode(null);
-            setDrawingActive(false);
-            const emitArea = () => {
-              const ring = polygon.getPath().getArray().map((ll) => [ll.lng(), ll.lat()]);
-              onAreaChangeRef.current?.(ring);
-            };
-            emitArea();
-            g.event.addListener(polygon.getPath(), 'set_at', emitArea);
-            g.event.addListener(polygon.getPath(), 'insert_at', emitArea);
-            g.event.addListener(polygon.getPath(), 'remove_at', emitArea);
-          });
-          if (!cancelled) setDrawingAvailable(true);
-        } catch (e) {
-          console.error('drawing library load error (map itself is unaffected)', e);
-        }
       } catch (e) {
         console.error('market map load error', e);
         if (!cancelled) setStatus('noauth');
@@ -1395,12 +1404,13 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelec
 
   return (
     <div className="m-mapwrap">
-      {status === 'ok' && drawingAvailable && (
+      {status === 'ok' && (
         <div className="m-drawctrl">
           {drawingActive ? (
             <>
-              <span className="m-drawhint">Click points to outline an area, double-click to finish</span>
-              <button type="button" className="m-drawbtn" onClick={() => { drawingManagerRef.current?.setDrawingMode(null); setDrawingActive(false); }}>Cancel</button>
+              <span className="m-drawhint">Click points to outline an area ({drawPointCount} so far)</span>
+              <button type="button" className="m-drawbtn" onClick={finishDrawing} disabled={drawPointCount < 3}>Finish area</button>
+              <button type="button" className="m-drawbtn secondary" onClick={cancelDrawing}>Cancel</button>
             </>
           ) : drawnArea ? (
             <button type="button" className="m-drawbtn" onClick={clearArea}>Clear drawn area</button>
@@ -1494,6 +1504,9 @@ const css = `
   .m-drawctrl { position: absolute; top: 10px; left: 10px; z-index: 6; display: flex; align-items: center; gap: 8px; background: #fff; border-radius: 6px; box-shadow: 0 2px 8px rgba(20,40,60,.18); padding: 6px 8px; }
   .m-drawbtn { padding: 7px 13px; background: #296190; color: #fff; border: 0; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap; }
   .m-drawbtn:hover { background: #21506f; }
+  .m-drawbtn:disabled { opacity: .5; cursor: default; }
+  .m-drawbtn.secondary { background: #eef1f3; color: #4a5a62; }
+  .m-drawbtn.secondary:hover { background: #e2e7ea; }
   .m-drawhint { font-size: 12px; color: #4a5a62; white-space: nowrap; }
   .m-map { width: 100%; height: 520px; }
   .m-mapmsg { padding: 40px 20px; text-align: center; color: #6a7a82; font-size: 13.5px; }
