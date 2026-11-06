@@ -164,16 +164,24 @@ function SharedMap({ rows }) {
             position: pos, map, title: r.address,
             icon: { path: g.SymbolPath.CIRCLE, scale: 9, fillColor: BLUE, fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 },
           });
-          const specs = [r.beds_total && `${r.beds_total} bd`, r.baths_total && `${r.baths_total} ba`, r.living_area && `${Number(r.living_area).toLocaleString()} sqft`].filter(Boolean).join(' · ');
+          const community = r.subdivision || r.neighborhood || r.mls_area;
+          const sub = [community, r.property_sub_type].filter(Boolean).join(' · ');
+          const specs = [r.beds_total && `${r.beds_total} bd`, r.baths_total && `${r.baths_total} ba`,
+            r.living_area && `${Number(r.living_area).toLocaleString()} sqft`,
+            r.lot_size_sqft && `${Number(r.lot_size_sqft).toLocaleString()} sqft lot`,
+            r.year_built && `Built ${r.year_built}`]
+            .filter(Boolean).join(' · ');
           const gm = mapsUrl(r.address), zl = zillowUrl(r.address, r.postal_code);
           marker.addListener('click', () => {
             info.setContent(
-              '<div style="font-family:Jost,sans-serif;max-width:220px;color:#1c2b33">' +
+              '<div style="font-family:Jost,sans-serif;max-width:240px;color:#1c2b33">' +
               '<div style="font-weight:700;font-size:15px">' + (r.address || '') + '</div>' +
-              (specs ? '<div style="font-size:12px;color:#6a7a82;margin:2px 0 6px">' + specs + '</div>' : '') +
-              '<div style="display:flex;gap:8px">' +
-              (gm ? '<a href="' + gm + '" target="_blank" rel="noopener" style="font-size:12px;color:#296190;font-weight:600">📍 Maps</a>' : '') +
-              (zl ? '<a href="' + zl + '" target="_blank" rel="noopener" style="font-size:12px;color:#296190;font-weight:600">🏠 Zillow</a>' : '') +
+              (sub ? '<div style="font-size:12px;color:#6a7a82;margin-top:2px">' + sub + '</div>' : '') +
+              (specs ? '<div style="font-size:12.5px;color:#4a5a62;margin:4px 0">' + specs + '</div>' : '') +
+              (r.off_market_date ? '<div style="font-size:11.5px;color:#9aa4ab;margin-bottom:8px">Off market since ' + fmtDate(r.off_market_date) + '</div>' : '<div style="margin-bottom:4px"></div>') +
+              '<div style="display:flex;gap:10px">' +
+              (gm ? '<a href="' + gm + '" target="_blank" rel="noopener" style="font-size:12.5px;color:#296190;font-weight:600;text-decoration:none">📍 Google Maps</a>' : '') +
+              (zl ? '<a href="' + zl + '" target="_blank" rel="noopener" style="font-size:12.5px;color:#296190;font-weight:600;text-decoration:none">🏠 Zillow</a>' : '') +
               '</div></div>'
             );
             info.open(map, marker);

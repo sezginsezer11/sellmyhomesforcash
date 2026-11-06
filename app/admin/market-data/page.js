@@ -469,6 +469,9 @@ function SearchTab({ token }) {
   const [newListName, setNewListName] = useState('');
   const [addingToList, setAddingToList] = useState(false);
   const [addMsg, setAddMsg] = useState('');
+  const [sharingSelected, setSharingSelected] = useState(false);
+  const [selectedShareUrl, setSelectedShareUrl] = useState('');
+  const [selectedShareCopied, setSelectedShareCopied] = useState(false);
 
   const loadLists = async () => {
     try {
@@ -503,22 +506,30 @@ function SearchTab({ token }) {
     setSelected(allSelected ? new Set() : new Set(keys));
   };
 
+  // Shared by "Add to list" and "Share link" — resolves the chosen list,
+  // creating one from the typed name first if that's what was filled in.
+  const resolveListId = async () => {
+    let listId = listChoice;
+    if (!listId && newListName.trim()) {
+      const res = await fetch('/api/market-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+        body: JSON.stringify({ action: 'create_list', name: newListName.trim() }),
+      });
+      const j = await res.json();
+      if (j.ok) { listId = j.list.id; await loadLists(); setListChoice(listId); setNewListName(''); }
+      else return { error: j.error || 'Could not create list.' };
+    }
+    if (!listId) return { error: 'Pick or name a list.' };
+    return { listId };
+  };
+
   const addSelectedToList = async () => {
     const groupKeys = Array.from(selected);
     if (!groupKeys.length) return;
-    setAddingToList(true); setAddMsg('');
+    setAddingToList(true); setAddMsg(''); setSelectedShareUrl('');
     try {
-      let listId = listChoice;
-      if (!listId && newListName.trim()) {
-        const res = await fetch('/api/market-data', {
-          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
-          body: JSON.stringify({ action: 'create_list', name: newListName.trim() }),
-        });
-        const j = await res.json();
-        if (j.ok) { listId = j.list.id; await loadLists(); setListChoice(listId); setNewListName(''); }
-        else { setAddMsg(j.error || 'Could not create list.'); setAddingToList(false); return; }
-      }
-      if (!listId) { setAddMsg('Pick or name a list.'); setAddingToList(false); return; }
+      const { listId, error } = await resolveListId();
+      if (error) { setAddMsg(error); setAddingToList(false); return; }
       const res = await fetch('/api/market-data', {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
         body: JSON.stringify({ action: 'add_to_list', list_id: listId, group_keys: groupKeys }),
@@ -529,6 +540,38 @@ function SearchTab({ token }) {
     } catch { setAddMsg('Error adding to list.'); }
     setAddingToList(false);
     setTimeout(() => setAddMsg(''), 3000);
+  };
+
+  // Adds the selection to the chosen/new list, then immediately generates
+  // (or reuses) that list's client share link — one click from "selected
+  // some rows" to "link ready to send," no detour through the Lists tab.
+  const shareSelected = async () => {
+    const groupKeys = Array.from(selected);
+    if (!groupKeys.length) return;
+    setSharingSelected(true); setAddMsg(''); setSelectedShareUrl('');
+    try {
+      const { listId, error } = await resolveListId();
+      if (error) { setAddMsg(error); setSharingSelected(false); return; }
+      await fetch('/api/market-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+        body: JSON.stringify({ action: 'add_to_list', list_id: listId, group_keys: groupKeys }),
+      });
+      const res = await fetch('/api/market-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+        body: JSON.stringify({ action: 'get_share_link', list_id: listId }),
+      });
+      const j = await res.json();
+      if (j.ok) {
+        setSelectedShareUrl(`${window.location.origin}/market-data/share/${j.slug}`);
+        setSelected(new Set());
+        loadLists();
+      } else setAddMsg(j.error || 'Could not create share link.');
+    } catch { setAddMsg('Error creating share link.'); }
+    setSharingSelected(false);
+  };
+  const copySelectedShareUrl = () => {
+    navigator.clipboard?.writeText(selectedShareUrl);
+    setSelectedShareCopied(true); setTimeout(() => setSelectedShareCopied(false), 1500);
   };
 
   const runSearch = async (e) => {
@@ -741,8 +784,19 @@ function SearchTab({ token }) {
               <button className="m-addlistbtn" onClick={addSelectedToList} disabled={addingToList || (!listChoice && !newListName.trim())}>
                 {addingToList ? 'Adding…' : 'Add to list'}
               </button>
+              <button className="m-addlistbtn" onClick={shareSelected} disabled={sharingSelected || (!listChoice && !newListName.trim())}>
+                {sharingSelected ? 'Creating link…' : 'Share link'}
+              </button>
               {addMsg && <span className="m-selectmsg">{addMsg}</span>}
               <button className="m-clearselectbtn" onClick={() => setSelected(new Set())}>Clear</button>
+            </div>
+          )}
+
+          {selectedShareUrl && (
+            <div className="m-sharepanel">
+              <input className="m-shareinput" readOnly value={selectedShareUrl} onFocus={(e) => e.target.select()} />
+              <button className="m-listactbtn" onClick={copySelectedShareUrl}>{selectedShareCopied ? 'Copied ✓' : 'Copy link'}</button>
+              <button className="m-listactbtn" onClick={() => setSelectedShareUrl('')}>Close</button>
             </div>
           )}
 
