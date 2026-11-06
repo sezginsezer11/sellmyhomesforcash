@@ -153,6 +153,9 @@ function ListsTab({ token }) {
   const [openLoading, setOpenLoading] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameVal, setRenameVal] = useState('');
+  const [showShare, setShowShare] = useState(false);
+  const [shareBusy, setShareBusy] = useState(false);
+  const [shareCopied, setShareCopied] = useState(false);
 
   const loadLists = async () => {
     setLoading(true);
@@ -166,7 +169,7 @@ function ListsTab({ token }) {
   useEffect(() => { loadLists(); }, []);
 
   const openOne = async (id) => {
-    setOpenId(id); setOpenList(null); setOpenRows([]); setOpenLoading(true); setRenaming(false);
+    setOpenId(id); setOpenList(null); setOpenRows([]); setOpenLoading(true); setRenaming(false); setShowShare(false);
     try {
       const res = await fetch('/api/market-data?list_id=' + encodeURIComponent(id), { headers: { Authorization: 'Bearer ' + token() } });
       const j = await res.json();
@@ -223,6 +226,40 @@ function ListsTab({ token }) {
     a.click(); URL.revokeObjectURL(url);
   };
 
+  const getShareLink = async () => {
+    setShareBusy(true);
+    try {
+      const res = await fetch('/api/market-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+        body: JSON.stringify({ action: 'get_share_link', list_id: openId }),
+      });
+      const j = await res.json();
+      if (j.ok) setOpenList((l) => ({ ...l, slug: j.slug }));
+    } catch {}
+    setShareBusy(false);
+  };
+  const openShare = async () => {
+    setShowShare(true);
+    if (!openList?.slug) await getShareLink();
+  };
+  const revokeShareLink = async () => {
+    if (!window.confirm('Stop sharing this list? The current link will stop working for your client.')) return;
+    setShareBusy(true);
+    try {
+      await fetch('/api/market-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+        body: JSON.stringify({ action: 'revoke_share_link', list_id: openId }),
+      });
+      setOpenList((l) => ({ ...l, slug: null }));
+    } catch {}
+    setShareBusy(false);
+  };
+  const shareUrl = openList?.slug && typeof window !== 'undefined' ? `${window.location.origin}/market-data/share/${openList.slug}` : '';
+  const copyShareUrl = () => {
+    navigator.clipboard?.writeText(shareUrl);
+    setShareCopied(true); setTimeout(() => setShareCopied(false), 1500);
+  };
+
   if (openId) {
     return (
       <div className="m-listsview">
@@ -242,9 +279,24 @@ function ListsTab({ token }) {
               <div className="m-listactions">
                 {!renaming && <button className="m-listactbtn" onClick={() => { setRenaming(true); setRenameVal(openList.name); }}>Rename</button>}
                 {openRows.length > 0 && <button className="m-listactbtn" onClick={exportCSV}>Export CSV</button>}
+                <button className="m-listactbtn" onClick={openShare}>Share with client</button>
                 <button className="m-listactbtn danger" onClick={deleteList}>Delete list</button>
               </div>
             </div>
+            {showShare && (
+              <div className="m-sharepanel">
+                {!openList.slug ? (
+                  <span className="m-dim">{shareBusy ? 'Creating link…' : 'No link yet.'}</span>
+                ) : (
+                  <>
+                    <input className="m-shareinput" readOnly value={shareUrl} onFocus={(e) => e.target.select()} />
+                    <button className="m-listactbtn" onClick={copyShareUrl}>{shareCopied ? 'Copied ✓' : 'Copy link'}</button>
+                    <button className="m-listactbtn danger" onClick={revokeShareLink} disabled={shareBusy}>Stop sharing</button>
+                  </>
+                )}
+                <button className="m-listactbtn" onClick={() => setShowShare(false)}>Close</button>
+              </div>
+            )}
             <div className="m-tablewrap">
               <table className="m-table">
                 <thead>
@@ -1098,6 +1150,9 @@ const css = `
   .m-listactbtn { padding: 7px 13px; border: 1px solid #d5dbdf; background: #fff; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 12.5px; font-weight: 600; color: #4a5a62; cursor: pointer; }
   .m-listactbtn:hover { border-color: #296190; color: #296190; }
   .m-listactbtn.danger:hover { border-color: #8a2020; color: #8a2020; }
+  .m-listactbtn:disabled { opacity: .5; cursor: default; }
+  .m-sharepanel { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: #eaf2fa; border: 1px solid #bcd2e4; border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; }
+  .m-shareinput { flex: 1; min-width: 220px; padding: 7px 10px; border: 1px solid #d5dbdf; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 12.5px; background: #fff; color: #1c2b33; }
   .m-removebtn { background: none; border: 0; color: #8a2020; font-family: 'Jost',sans-serif; font-size: 12px; cursor: pointer; opacity: .7; }
   .m-removebtn:hover { opacity: 1; text-decoration: underline; }
   .m-checkcol { width: 32px; text-align: center !important; padding: 6px !important; }

@@ -17,6 +17,30 @@ async function requireAdmin(request) {
   return data.user;
 }
 
+function slugify(s) {
+  return (s || '').toString().toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+}
+function rand(n = 4) {
+  return Math.random().toString(36).slice(2, 2 + n);
+}
+
+// The public share page never sees MLS status, price, days-on-market, MLS #,
+// or APN — only what's safe to hand a client directly (per explicit MLS
+// compliance decision: the admin tool's data stays admin-only otherwise).
+const PUBLIC_LIST_FIELDS = [
+  'group_key', 'address', 'postal_code', 'subdivision', 'neighborhood', 'mls_area',
+  'property_sub_type', 'beds_total', 'baths_total', 'living_area', 'lot_size_sqft',
+  'year_built', 'lat', 'lng', 'off_market_date',
+];
+function toPublicListRow(r) {
+  const out = {};
+  for (const f of PUBLIC_LIST_FIELDS) out[f] = r[f] ?? null;
+  return out;
+}
+
 // Fields compared to decide "updated" vs "skipped (no change)" in the upload summary.
 const DIFF_FIELDS = [
   'status_normalized', 'current_price', 'close_price', 'orig_list_price',
@@ -142,6 +166,33 @@ export async function POST(request) {
       return NextResponse.json({ ok: true });
     }
 
+    if (body.action === 'get_share_link') {
+      const listId = (body.list_id || '').toString();
+      if (!listId) return NextResponse.json({ ok: false, error: 'list_id required.' }, { status: 400 });
+      const { data: list, error: getErr } = await supabaseAdmin.from('mls_lists').select('*').eq('id', listId).single();
+      if (getErr || !list) return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 });
+      if (list.slug) return NextResponse.json({ ok: true, slug: list.slug });
+
+      let base = slugify(list.name) || 'list';
+      let slug = base + '-' + rand(4);
+      for (let i = 0; i < 4; i++) {
+        const { data: clash } = await supabaseAdmin.from('mls_lists').select('id').eq('slug', slug).single();
+        if (!clash) break;
+        slug = base + '-' + rand(5);
+      }
+      const { error: saveErr } = await supabaseAdmin.from('mls_lists').update({ slug }).eq('id', listId);
+      if (saveErr) { console.error(saveErr); return NextResponse.json({ ok: false, error: 'Could not create share link.' }, { status: 500 }); }
+      return NextResponse.json({ ok: true, slug });
+    }
+
+    if (body.action === 'revoke_share_link') {
+      const listId = (body.list_id || '').toString();
+      if (!listId) return NextResponse.json({ ok: false, error: 'list_id required.' }, { status: 400 });
+      const { error } = await supabaseAdmin.from('mls_lists').update({ slug: null }).eq('id', listId);
+      if (error) return NextResponse.json({ ok: false, error: 'Could not revoke share link.' }, { status: 500 });
+      return NextResponse.json({ ok: true });
+    }
+
     if (body.action === 'delete_list') {
       const listId = (body.list_id || '').toString();
       if (!listId) return NextResponse.json({ ok: false, error: 'list_id required.' }, { status: 400 });
@@ -242,13 +293,56 @@ const SEARCH_FIELDS_PROSPECTS = [
   'total_listings', 'times_listed_without_selling', 'lat', 'lng',
 ];
 
-// GET — admin search (prospects or all history), or a single APN/address-group's timeline.
+// GET — admin search (prospects or all history), a single APN/address-group's
+// timeline, or a public shared list by slug (no auth — see PUBLIC_LIST_FIELDS).
 export async function GET(request) {
   try {
+    const url = new URL(request.url);
+
+    // Public, read-only list view (what a client sees via the share link).
+    // Same "most recent episode wins" resolution as the admin list view, but
+    // stripped to PUBLIC_LIST_FIELDS and with no auth required.
+    const publicSlug = url.searchParams.get('public_slug');
+    if (publicSlug) {
+      const { data: list, error: listErr } = await supabaseAdmin.from('mls_lists').select('id, name, slug').eq('slug', publicSlug).single();
+      if (listErr || !list) return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 });
+
+      const { data: items } = await fetchAllPaginated(() => supabaseAdmin.from('mls_list_items').select('group_key').eq('list_id', list.id));
+      const groupKeys = (items || []).map((i) => i.group_key);
+      if (!groupKeys.length) return NextResponse.json({ ok: true, list: { name: list.name }, rows: [] });
+
+      const CHUNK = 500;
+      let listings = [];
+      for (let i = 0; i < groupKeys.length; i += CHUNK) {
+        const chunk = groupKeys.slice(i, i + CHUNK);
+        const { data, error } = await fetchAllPaginated(() => supabaseAdmin.from('mls_listings').select('*').in('group_key', chunk));
+        if (error) { console.error(error); return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 }); }
+        listings = listings.concat(data || []);
+      }
+
+      const eventDate = (r) => r.close_date || r.off_market_date || r.listing_contract_date || null;
+      const byGroup = new Map();
+      for (const r of listings) {
+        if (!byGroup.has(r.group_key)) byGroup.set(r.group_key, []);
+        byGroup.get(r.group_key).push(r);
+      }
+      const rank = (r) => (['sold', 'active', 'pending'].includes(r.status_normalized) ? 0 : 1);
+      const rows = [];
+      for (const [, group] of byGroup) {
+        const latest = group.slice().sort((a, b) => {
+          const da = eventDate(a), db = eventDate(b);
+          if (da !== db) { if (da == null) return 1; if (db == null) return -1; return da < db ? 1 : -1; }
+          if (rank(a) !== rank(b)) return rank(a) - rank(b);
+          return (b.id > a.id ? 1 : -1);
+        })[0];
+        rows.push(toPublicListRow(latest));
+      }
+      rows.sort((a, b) => (a.address || '').localeCompare(b.address || ''));
+      return NextResponse.json({ ok: true, list: { name: list.name }, rows });
+    }
+
     const admin = await requireAdmin(request);
     if (!admin) return NextResponse.json({ ok: false, error: 'Unauthorized.' }, { status: 401 });
-
-    const url = new URL(request.url);
 
     // Timeline for one property group (all listing episodes, oldest to newest).
     const groupKey = url.searchParams.get('group_key');
