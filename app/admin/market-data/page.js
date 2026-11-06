@@ -869,7 +869,40 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick }) {
   const ref = useRef(null);
   const [status, setStatus] = useState('loading'); // loading | ok | nocoords | noauth
 
-  const pts = rows.filter((r) => r.lat && r.lng);
+  // Multiple units in the same building (e.g. a condo complex) all geocode to
+  // the same street-level point, which stacks their pins exactly on top of
+  // each other and hides all but one. Spread any such group into a small
+  // circle around that shared point so every property gets its own visible,
+  // clickable pin — same technique mapping tools call "spiderfying."
+  const pts = useMemo(() => {
+    const raw = rows.filter((r) => r.lat && r.lng);
+    const groups = new Map();
+    for (const r of raw) {
+      const key = `${Number(r.lat).toFixed(5)},${Number(r.lng).toFixed(5)}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(r);
+    }
+    const out = [];
+    for (const group of groups.values()) {
+      if (group.length === 1) {
+        out.push({ ...group[0], _lat: Number(group[0].lat), _lng: Number(group[0].lng) });
+        continue;
+      }
+      const baseLat = Number(group[0].lat), baseLng = Number(group[0].lng);
+      const metersPerDegLat = 111320;
+      const metersPerDegLng = 111320 * Math.cos((baseLat * Math.PI) / 180);
+      const radiusMeters = 9 + Math.min(group.length, 14);
+      group.forEach((r, i) => {
+        const angle = (2 * Math.PI * i) / group.length;
+        out.push({
+          ...r,
+          _lat: baseLat + (radiusMeters * Math.sin(angle)) / metersPerDegLat,
+          _lng: baseLng + (radiusMeters * Math.cos(angle)) / metersPerDegLng,
+        });
+      });
+    }
+    return out;
+  }, [rows]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -918,7 +951,7 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick }) {
         const bounds = new g.LatLngBounds();
         const info = new InfoWindow();
         pts.forEach((r) => {
-          const pos = { lat: Number(r.lat), lng: Number(r.lng) };
+          const pos = { lat: r._lat, lng: r._lng };
           bounds.extend(pos);
           const rowStatus = mode === 'prospects' ? r.last_status : r.status_normalized;
           const color = STATUS_COLOR[rowStatus] || '#6a7a82';
@@ -942,7 +975,7 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick }) {
             );
             info.open(map, marker);
           });
-          marker.addListener('click', () => onMarkerClick(r.group_key, rows.indexOf(r)));
+          marker.addListener('click', () => onMarkerClick(r.group_key, rows.findIndex((x) => x.group_key === r.group_key)));
         });
         map.fitBounds(bounds, 60);
         g.event.addListenerOnce(map, 'idle', () => { if (pts.length === 1) map.setZoom(15); });
