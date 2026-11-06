@@ -979,6 +979,11 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelec
   // rebuild on every selection toggle (that would reset pan/zoom each click).
   const selectedRef = useRef(selected);
   useEffect(() => { selectedRef.current = selected; }, [selected]);
+  // Guards against building a second Map instance into the same div if the
+  // load effect fires more than once for the same rows/mode (observed in
+  // prod on the public share page: a stray second run clobbered the first,
+  // working map's "ok" status back to "couldn't load").
+  const builtRef = useRef(false);
   const toggleSelectRef = useRef(toggleSelect);
   useEffect(() => { toggleSelectRef.current = toggleSelect; }, [toggleSelect]);
 
@@ -1071,7 +1076,8 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelec
         const { Map, InfoWindow } = await window.google.maps.importLibrary('maps');
         const { Marker } = await window.google.maps.importLibrary('marker');
         const refReady = await waitForRef();
-        if (cancelled || !refReady || !ref.current) return;
+        if (cancelled || !refReady || !ref.current || builtRef.current) return;
+        builtRef.current = true;
         const g = window.google.maps;
         const map = new Map(ref.current, {
           mapTypeId: 'roadmap', mapTypeControl: true, streetViewControl: false, fullscreenControl: true,
@@ -1130,7 +1136,7 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelec
       }
     })();
 
-    return () => { cancelled = true; };
+    return () => { cancelled = true; builtRef.current = false; };
   }, [rows, mode]);
 
   return (

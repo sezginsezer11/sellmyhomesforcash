@@ -92,6 +92,11 @@ function SharedMap({ rows, highlightKey, onPinClick }) {
   const mapRef = useRef(null);
   const onPinClickRef = useRef(onPinClick);
   useEffect(() => { onPinClickRef.current = onPinClick; }, [onPinClick]);
+  // Guards against building a second Map instance into the same div if the
+  // load effect fires more than once for the same pts (observed in prod: a
+  // stray second run was throwing and clobbering the first, working map's
+  // "ok" status back to "couldn't load").
+  const builtRef = useRef(false);
 
   const pts = useMemo(() => {
     const raw = rows.filter((r) => r.lat && r.lng);
@@ -168,7 +173,8 @@ function SharedMap({ rows, highlightKey, onPinClick }) {
         const { Map, InfoWindow } = await window.google.maps.importLibrary('maps');
         const { Marker } = await window.google.maps.importLibrary('marker');
         const refReady = await waitForRef();
-        if (cancelled || !refReady || !ref.current) return;
+        if (cancelled || !refReady || !ref.current || builtRef.current) return;
+        builtRef.current = true;
         const g = window.google.maps;
         const map = new Map(ref.current, { mapTypeId: 'roadmap', mapTypeControl: true, streetViewControl: false, fullscreenControl: true });
         mapRef.current = map;
@@ -218,7 +224,7 @@ function SharedMap({ rows, highlightKey, onPinClick }) {
       }
     })();
 
-    return () => { cancelled = true; };
+    return () => { cancelled = true; builtRef.current = false; };
   }, [pts]);
 
   // Clicking a card in the list column re-opens that property's pin without
