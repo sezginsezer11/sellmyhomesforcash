@@ -74,9 +74,24 @@ export default function MarketDataPage() {
 function UploadTab({ token }) {
   const [dragOver, setDragOver] = useState(false);
   const [results, setResults] = useState([]); // [{filename, status: 'working'|'ok'|'error', summary, error}]
+  const [uploadName, setUploadName] = useState('');
+  const [pastUploads, setPastUploads] = useState([]);
+  const [loadingPast, setLoadingPast] = useState(true);
   const fileInputRef = useRef(null);
+  const nameReady = uploadName.trim().length > 0;
+
+  const loadPastUploads = async () => {
+    try {
+      const res = await fetch('/api/market-data?uploads=1', { headers: { Authorization: 'Bearer ' + token() } });
+      const j = await res.json();
+      if (j.ok) setPastUploads(j.uploads || []);
+    } catch {}
+    setLoadingPast(false);
+  };
+  useEffect(() => { loadPastUploads(); }, []);
 
   const processFiles = async (fileList) => {
+    if (!nameReady) return;
     const files = Array.from(fileList).filter((f) => /\.csv$/i.test(f.name));
     if (!files.length) return;
     for (const file of files) {
@@ -86,12 +101,13 @@ function UploadTab({ token }) {
         const res = await fetch('/api/market-data', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
-          body: JSON.stringify({ action: 'upload_csv', filename: file.name, csv_text: text }),
+          body: JSON.stringify({ action: 'upload_csv', filename: file.name, csv_text: text, name: uploadName.trim() }),
         });
         const j = await res.json();
         setResults((rs) => rs.map((r) => (r.filename === file.name && r.status === 'working')
           ? (j.ok ? { ...r, status: 'ok', summary: j.summary } : { ...r, status: 'error', error: j.error || 'Upload failed.' })
           : r));
+        if (j.ok) loadPastUploads();
       } catch (e) {
         setResults((rs) => rs.map((r) => (r.filename === file.name && r.status === 'working') ? { ...r, status: 'error', error: 'Upload error.' } : r));
       }
@@ -103,18 +119,25 @@ function UploadTab({ token }) {
     if (e.dataTransfer.files?.length) processFiles(e.dataTransfer.files);
   };
 
+  const fmtWhen = (v) => (v ? new Date(v).toLocaleString() : '—');
+
   return (
     <div className="m-upload">
+      <input className="m-uploadname" placeholder="Client / upload name (e.g. Smith Family)…" value={uploadName} onChange={(e) => setUploadName(e.target.value)} />
       <div
-        className={'m-dropzone' + (dragOver ? ' over' : '')}
-        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        className={'m-dropzone' + (dragOver ? ' over' : '') + (nameReady ? '' : ' disabled')}
+        onDragOver={(e) => { e.preventDefault(); if (nameReady) setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
         onDrop={onDrop}
-        onClick={() => fileInputRef.current?.click()}
+        onClick={() => { if (nameReady) fileInputRef.current?.click(); }}
       >
         <p className="m-droptitle">Drag &amp; drop CSV export(s) here</p>
-        <p className="m-dropsub">Sold, Active, Pending, Expired, Canceled, Withdrawn — any mix, any column order. Click to browse.</p>
-        <input ref={fileInputRef} type="file" accept=".csv" multiple style={{ display: 'none' }}
+        <p className="m-dropsub">
+          {nameReady
+            ? 'Sold, Active, Pending, Expired, Canceled, Withdrawn — any mix, any column order. Click to browse.'
+            : 'Enter a client / upload name above first.'}
+        </p>
+        <input ref={fileInputRef} type="file" accept=".csv" multiple style={{ display: 'none' }} disabled={!nameReady}
           onChange={(e) => { if (e.target.files?.length) processFiles(e.target.files); e.target.value = ''; }} />
       </div>
 
@@ -136,6 +159,36 @@ function UploadTab({ token }) {
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      <div className="m-pasthead">Past uploads</div>
+      {loadingPast ? <p className="m-dim">Loading…</p> : pastUploads.length === 0 ? (
+        <p className="m-dim">No uploads yet.</p>
+      ) : (
+        <div className="m-tablewrap">
+          <table className="m-table">
+            <thead>
+              <tr>
+                <th>Name</th><th>File</th><th>When</th>
+                <th className="m-r">Read</th><th className="m-r">Inserted</th><th className="m-r">Updated</th><th className="m-r">Skipped</th><th className="m-r">Flagged</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pastUploads.map((u) => (
+                <tr key={u.id}>
+                  <td className="m-addr">{u.name}</td>
+                  <td>{u.filename}</td>
+                  <td>{fmtWhen(u.uploaded_at)}</td>
+                  <td className="m-r">{u.read_count}</td>
+                  <td className="m-r">{u.inserted_count}</td>
+                  <td className="m-r">{u.updated_count}</td>
+                  <td className="m-r">{u.skipped_count}</td>
+                  <td className="m-r">{u.flagged_count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
@@ -438,6 +491,7 @@ function SearchTab({ token }) {
   const [prospectsOnly, setProspectsOnly] = useState(true);
   const [community, setCommunity] = useState('');
   const [address, setAddress] = useState('');
+  const [zip, setZip] = useState('');
   const [statuses, setStatuses] = useState([]);
   const [offFrom, setOffFrom] = useState('');
   const [offTo, setOffTo] = useState('');
@@ -574,12 +628,32 @@ function SearchTab({ token }) {
     setSelectedShareCopied(true); setTimeout(() => setSelectedShareCopied(false), 1500);
   };
 
+  // Shares the current selection directly — no list to pick or name first.
+  const quickShare = async () => {
+    const groupKeys = Array.from(selected);
+    if (!groupKeys.length) return;
+    setSharingSelected(true); setAddMsg(''); setSelectedShareUrl('');
+    try {
+      const res = await fetch('/api/market-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+        body: JSON.stringify({ action: 'quick_share', group_keys: groupKeys }),
+      });
+      const j = await res.json();
+      if (j.ok) {
+        setSelectedShareUrl(`${window.location.origin}/market-data/share/${j.slug}`);
+        setSelected(new Set());
+        loadLists();
+      } else setAddMsg(j.error || 'Could not create share link.');
+    } catch { setAddMsg('Error creating share link.'); }
+    setSharingSelected(false);
+  };
+
   const runSearch = async (e) => {
     if (e) e.preventDefault();
     setLoading(true); setSearched(true);
     const params = new URLSearchParams({
       prospects_only: prospectsOnly ? '1' : '0',
-      status: statuses.join(','), community, address, off_from: offFrom, off_to: offTo,
+      status: statuses.join(','), community, address, zip, off_from: offFrom, off_to: offTo,
       price_min: priceMin, price_max: priceMax, sqft_min: sqftMin, sqft_max: sqftMax,
       beds, sub_type: subTypes.join(','), filter_list_id: listFilters.join(','), tag: tagFilter,
     });
@@ -589,6 +663,13 @@ function SearchTab({ token }) {
       if (j.ok) { setRows(j.rows || []); setMode(j.mode); }
     } catch {}
     setLoading(false);
+  };
+
+  const resetFilters = () => {
+    setCommunity(''); setAddress(''); setZip(''); setStatuses([]);
+    setOffFrom(''); setOffTo(''); setPriceMin(''); setPriceMax('');
+    setSqftMin(''); setSqftMax(''); setBeds(''); setSubTypes([]);
+    setListFilters([]); setTagFilter('');
   };
 
   const openTimeline = async (groupKey, index) => {
@@ -711,6 +792,7 @@ function SearchTab({ token }) {
       <form className="m-filters" onSubmit={runSearch}>
         <input placeholder="Address…" value={address} onChange={(e) => setAddress(e.target.value)} />
         <input placeholder="Community (subdivision, neighborhood, or area)…" value={community} onChange={(e) => setCommunity(e.target.value)} />
+        <input placeholder="Zip…" className="m-zipinput" value={zip} onChange={(e) => setZip(e.target.value)} />
         <MultiSelect
           placeholder="All statuses"
           options={(prospectsOnly ? STATUSES : [...STATUSES, 'active', 'pending', 'sold', 'unknown']).map((s) => ({ value: s, label: s[0].toUpperCase() + s.slice(1) }))}
@@ -745,6 +827,7 @@ function SearchTab({ token }) {
         />
         <input placeholder="Tag…" value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} />
         <button type="submit" className="m-searchbtn" disabled={loading}>{loading ? 'Searching…' : 'Search'}</button>
+        <button type="button" className="m-resetbtn" onClick={resetFilters}>Reset</button>
         {searched && rows.length > 0 && <button type="button" className="m-exportbtn" onClick={exportCSV}>Export CSV</button>}
       </form>
 
@@ -784,8 +867,12 @@ function SearchTab({ token }) {
               <button className="m-addlistbtn" onClick={addSelectedToList} disabled={addingToList || (!listChoice && !newListName.trim())}>
                 {addingToList ? 'Adding…' : 'Add to list'}
               </button>
-              <button className="m-addlistbtn" onClick={shareSelected} disabled={sharingSelected || (!listChoice && !newListName.trim())}>
-                {sharingSelected ? 'Creating link…' : 'Share link'}
+              <button className="m-addlistbtn" onClick={shareSelected} disabled={sharingSelected || (!listChoice && !newListName.trim())} title="Adds the selection to the chosen/new list, then shares that list">
+                {sharingSelected ? 'Creating link…' : 'Add to list & share'}
+              </button>
+              <span className="m-selectorsep">or</span>
+              <button className="m-addlistbtn quick" onClick={quickShare} disabled={sharingSelected} title="Shares just these properties — doesn't require a list">
+                {sharingSelected ? 'Creating link…' : 'Share selected (no list)'}
               </button>
               {addMsg && <span className="m-selectmsg">{addMsg}</span>}
               <button className="m-clearselectbtn" onClick={() => setSelected(new Set())}>Clear</button>
@@ -1161,8 +1248,11 @@ const css = `
   .m-tab { background: none; border: 0; border-bottom: 2px solid transparent; padding: 10px 4px; margin-right: 18px; font-family: 'Jost',sans-serif; font-size: 15px; font-weight: 600; color: #6a7a82; cursor: pointer; }
   .m-tab.on { color: #296190; border-bottom-color: #296190; }
 
+  .m-uploadname { width: 100%; max-width: 420px; padding: 10px 13px; border: 1px solid #d5dbdf; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 14px; margin-bottom: 14px; display: block; }
   .m-dropzone { border: 2px dashed #bcd2e4; border-radius: 12px; padding: 46px 20px; text-align: center; background: #f5f9fc; cursor: pointer; transition: border-color .15s, background .15s; }
   .m-dropzone.over { border-color: #296190; background: #eaf2fa; }
+  .m-dropzone.disabled { cursor: default; opacity: .55; }
+  .m-pasthead { font-family: 'Cormorant Garamond',serif; font-size: 20px; margin: 28px 0 12px; }
   .m-droptitle { font-family: 'Cormorant Garamond',serif; font-size: 22px; margin: 0 0 6px; color: #1c2b33; }
   .m-dropsub { font-size: 13.5px; color: #6a7a82; margin: 0; }
   .m-results { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
@@ -1203,6 +1293,9 @@ const css = `
   .m-dateclear:hover { color: #8a2020; }
   .m-searchbtn { padding: 9px 18px; background: #296190; color: #fff; border: 0; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13.5px; font-weight: 600; cursor: pointer; }
   .m-searchbtn:disabled { opacity: .6; cursor: default; }
+  .m-resetbtn { padding: 9px 16px; background: #fff; color: #6a7a82; border: 1px solid #d5dbdf; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13.5px; font-weight: 600; cursor: pointer; }
+  .m-resetbtn:hover { border-color: #b8c0c5; color: #4a5a62; }
+  .m-zipinput { width: 80px; }
   .m-exportbtn { padding: 9px 16px; background: #1c5b34; color: #fff; border: 0; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13.5px; font-weight: 600; cursor: pointer; }
 
   .m-resultbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
@@ -1261,6 +1354,7 @@ const css = `
   .m-selectorsep { color: #9aa4ab; font-size: 12px; }
   .m-addlistbtn { padding: 7px 14px; background: #296190; color: #fff; border: 0; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap; }
   .m-addlistbtn:disabled { opacity: .5; cursor: default; }
+  .m-addlistbtn.quick { background: #1c5b34; }
   .m-selectmsg { color: #1c5b34; font-weight: 600; }
   .m-clearselectbtn { background: none; border: 0; color: #6a7a82; font-family: 'Jost',sans-serif; font-size: 12.5px; cursor: pointer; text-decoration: underline; margin-left: auto; }
   .m-starbtn { background: none; border: 0; cursor: pointer; font-size: 16px; color: #d5dbdf; padding: 2px; line-height: 1; }

@@ -193,6 +193,33 @@ export async function POST(request) {
       return NextResponse.json({ ok: true });
     }
 
+    // Shares a selection directly, with no existing/named list required — still
+    // backed by a real (auto-named) list under the hood, since that's what the
+    // slug/revoke machinery is built on, but the admin never has to name one.
+    if (body.action === 'quick_share') {
+      const groupKeys = Array.isArray(body.group_keys) ? body.group_keys.filter(Boolean) : [];
+      if (!groupKeys.length) return NextResponse.json({ ok: false, error: 'group_keys required.' }, { status: 400 });
+
+      const name = `Shared selection — ${new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}`;
+      const { data: list, error: listErr } = await supabaseAdmin.from('mls_lists').insert({ name }).select('*').single();
+      if (listErr) { console.error(listErr); return NextResponse.json({ ok: false, error: 'Could not create share.' }, { status: 500 }); }
+
+      const itemRows = groupKeys.map((gk) => ({ list_id: list.id, group_key: gk.toString() }));
+      const { error: itemsErr } = await supabaseAdmin.from('mls_list_items').upsert(itemRows, { onConflict: 'list_id,group_key', ignoreDuplicates: true });
+      if (itemsErr) { console.error(itemsErr); return NextResponse.json({ ok: false, error: 'Could not add properties.' }, { status: 500 }); }
+
+      let base = slugify(name) || 'shared';
+      let slug = base + '-' + rand(4);
+      for (let i = 0; i < 4; i++) {
+        const { data: clash } = await supabaseAdmin.from('mls_lists').select('id').eq('slug', slug).single();
+        if (!clash) break;
+        slug = base + '-' + rand(5);
+      }
+      const { error: slugErr } = await supabaseAdmin.from('mls_lists').update({ slug }).eq('id', list.id);
+      if (slugErr) { console.error(slugErr); return NextResponse.json({ ok: false, error: 'Could not create share link.' }, { status: 500 }); }
+      return NextResponse.json({ ok: true, slug, list_id: list.id, list_name: name });
+    }
+
     if (body.action === 'delete_list') {
       const listId = (body.list_id || '').toString();
       if (!listId) return NextResponse.json({ ok: false, error: 'list_id required.' }, { status: 400 });
@@ -226,16 +253,31 @@ export async function POST(request) {
     }
     const csvText = (body.csv_text || '').toString();
     const filename = (body.filename || 'upload.csv').toString().slice(0, 200);
+    const uploadName = (body.name || '').toString().trim().slice(0, 120);
+    if (!uploadName) {
+      return NextResponse.json({ ok: false, error: 'Upload name required.' }, { status: 400 });
+    }
     if (!csvText.trim()) {
       return NextResponse.json({ ok: false, error: 'Empty file.' }, { status: 400 });
     }
 
+    // Degrades silently if mls_uploads isn't there yet — never breaks the
+    // actual CSV upload, which is the part that matters.
+    const recordUpload = async (summary) => {
+      try {
+        await supabaseAdmin.from('mls_uploads').insert({
+          name: uploadName, filename,
+          read_count: summary.read, inserted_count: summary.inserted,
+          updated_count: summary.updated, skipped_count: summary.skipped, flagged_count: summary.flagged,
+        });
+      } catch (e) { console.error('mls_uploads insert error:', e); }
+    };
+
     const { rows, totalDataRows, skippedNoMlsNumber } = parseMlsCsv(csvText, filename);
     if (rows.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        summary: { read: totalDataRows, inserted: 0, updated: 0, skipped: skippedNoMlsNumber, flagged: 0 },
-      });
+      const summary = { read: totalDataRows, inserted: 0, updated: 0, skipped: skippedNoMlsNumber, flagged: 0 };
+      await recordUpload(summary);
+      return NextResponse.json({ ok: true, summary });
     }
 
     // Look up existing rows for this batch's MLS #s so we can report insert vs
@@ -275,10 +317,9 @@ export async function POST(request) {
       return NextResponse.json({ ok: false, error: 'Upsert failed: ' + (upsertErr.message || '') }, { status: 500 });
     }
 
-    return NextResponse.json({
-      ok: true,
-      summary: { read: totalDataRows, inserted, updated, skipped, flagged },
-    });
+    const summary = { read: totalDataRows, inserted, updated, skipped, flagged };
+    await recordUpload(summary);
+    return NextResponse.json({ ok: true, summary });
   } catch (e) {
     console.error('market-data POST error:', e);
     return NextResponse.json({ ok: false, error: 'Something went wrong.' }, { status: 500 });
@@ -286,7 +327,7 @@ export async function POST(request) {
 }
 
 const SEARCH_FIELDS_PROSPECTS = [
-  'group_key', 'apn_normalized', 'flagged', 'last_id', 'last_mls_number', 'starred', 'tag', 'address', 'subdivision',
+  'group_key', 'apn_normalized', 'flagged', 'last_id', 'last_mls_number', 'starred', 'tag', 'address', 'postal_code', 'subdivision',
   'neighborhood', 'mls_area', 'property_sub_type', 'beds_total', 'baths_total', 'living_area',
   'lot_size_sqft', 'year_built', 'last_status', 'last_list_price', 'last_current_price',
   'original_list_price', 'last_off_market_date', 'days_since_off_market',
@@ -366,6 +407,17 @@ export async function GET(request) {
       return NextResponse.json({ ok: true, sub_types: Array.from(seen).sort() });
     }
 
+    // Upload history, most recent first — so the admin can see which name/client
+    // a past CSV drop was for.
+    if (url.searchParams.get('uploads') === '1') {
+      const { data, error } = await supabaseAdmin.from('mls_uploads').select('*').order('uploaded_at', { ascending: false }).limit(200);
+      if (error) {
+        if (error.code === '42P01' || error.code === 'PGRST205') return NextResponse.json({ ok: true, uploads: [] }); // table not migrated yet
+        return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 });
+      }
+      return NextResponse.json({ ok: true, uploads: data || [] });
+    }
+
     // All saved lists, with item counts.
     if (url.searchParams.get('lists') === '1') {
       const { data: lists, error } = await supabaseAdmin.from('mls_lists').select('*').order('updated_at', { ascending: false });
@@ -422,6 +474,7 @@ export async function GET(request) {
     const prospectsOnly = url.searchParams.get('prospects_only') !== '0'; // default true
     const community = (url.searchParams.get('community') || '').trim();
     const address = (url.searchParams.get('address') || '').trim();
+    const zip = (url.searchParams.get('zip') || '').trim();
     // Comma-separated — any of several statuses/types/lists at once. Empty means no filter.
     const splitCsv = (v) => (v || '').trim().split(',').map((s) => s.trim()).filter(Boolean);
     const statuses = splitCsv(url.searchParams.get('status'));
@@ -454,10 +507,11 @@ export async function GET(request) {
       // lat/lng were added in a later migration — if it hasn't been run yet on this
       // database, selecting them by name 400s the whole query (PostgREST error
       // 42703). Fall back to the same search without them rather than show nothing.
-      const buildProspectsQuery = (fields) => () => {
+      const buildProspectsQuery = (fields, includePostal = true) => () => {
         let q = supabaseAdmin.from('mls_prospects').select(fields.join(','));
         if (community) q = q.or(`subdivision.ilike.%${escLike(community)}%,neighborhood.ilike.%${escLike(community)}%,mls_area.ilike.%${escLike(community)}%`);
         if (address) q = q.ilike('address', `%${escLike(address)}%`);
+        if (zip && includePostal) q = q.eq('postal_code', zip);
         if (statuses.length) q = q.in('last_status', statuses);
         if (offFrom) q = q.gte('last_off_market_date', offFrom);
         if (offTo) q = q.lte('last_off_market_date', offTo);
@@ -474,7 +528,9 @@ export async function GET(request) {
 
       let { data, error } = await fetchAllPaginated(buildProspectsQuery(SEARCH_FIELDS_PROSPECTS));
       if (error && error.code === '42703') {
-        ({ data, error } = await fetchAllPaginated(buildProspectsQuery(SEARCH_FIELDS_PROSPECTS.filter((f) => f !== 'lat' && f !== 'lng'))));
+        // Older databases may not have postal_code/lat/lng on the view yet — degrade
+        // gracefully (drop those fields and the zip filter) rather than show nothing.
+        ({ data, error } = await fetchAllPaginated(buildProspectsQuery(SEARCH_FIELDS_PROSPECTS.filter((f) => f !== 'lat' && f !== 'lng' && f !== 'postal_code'), false)));
       }
       if (error) { console.error(error); return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 }); }
       const withLists = await attachListMemberships(data || []);
@@ -486,6 +542,7 @@ export async function GET(request) {
       let q = supabaseAdmin.from('mls_listings').select('*');
       if (community) q = q.or(`subdivision.ilike.%${escLike(community)}%,neighborhood.ilike.%${escLike(community)}%,mls_area.ilike.%${escLike(community)}%`);
       if (address) q = q.ilike('address', `%${escLike(address)}%`);
+      if (zip) q = q.eq('postal_code', zip);
       if (statuses.length) q = q.in('status_normalized', statuses);
       if (offFrom) q = q.gte('off_market_date', offFrom);
       if (offTo) q = q.lte('off_market_date', offTo);
