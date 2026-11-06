@@ -801,7 +801,7 @@ function SearchTab({ token }) {
           )}
 
           {view === 'map' ? (
-            <MarketMap rows={sortedRows} mode={mode} isStarred={isStarred} onMarkerClick={openTimeline} />
+            <MarketMap rows={sortedRows} mode={mode} isStarred={isStarred} onMarkerClick={openTimeline} selected={selected} toggleSelect={toggleSelect} />
           ) : (
           <div className="m-tablewrap">
             <table className="m-table">
@@ -971,9 +971,16 @@ function SearchTab({ token }) {
 }
 
 // ---- Google Map with status-colored pins ----
-function MarketMap({ rows, mode, isStarred, onMarkerClick }) {
+function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelect }) {
   const ref = useRef(null);
   const [status, setStatus] = useState('loading'); // loading | ok | nocoords | noauth
+
+  // Read via refs inside the map effect below, which intentionally doesn't
+  // rebuild on every selection toggle (that would reset pan/zoom each click).
+  const selectedRef = useRef(selected);
+  useEffect(() => { selectedRef.current = selected; }, [selected]);
+  const toggleSelectRef = useRef(toggleSelect);
+  useEffect(() => { toggleSelectRef.current = toggleSelect; }, [toggleSelect]);
 
   // Multiple units in the same building (e.g. a condo complex) all geocode to
   // the same street-level point, which stacks their pins exactly on top of
@@ -1056,6 +1063,17 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick }) {
         });
         const bounds = new g.LatLngBounds();
         const info = new InfoWindow();
+        // The InfoWindow's content is a raw HTML string, so its checkbox needs
+        // a real DOM listener wired up after each render — `currentRow` tracks
+        // which property the open popup belongs to.
+        let currentRow = null;
+        g.event.addListener(info, 'domready', () => {
+          if (!currentRow) return;
+          const cb = document.getElementById('ms-pin-cb');
+          if (!cb) return;
+          cb.checked = selectedRef.current.has(currentRow.group_key);
+          cb.onclick = (e) => { e.stopPropagation(); toggleSelectRef.current(currentRow.group_key); };
+        });
         pts.forEach((r) => {
           const pos = { lat: r._lat, lng: r._lng };
           bounds.extend(pos);
@@ -1066,14 +1084,19 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick }) {
             position: pos, map, title: r.address,
             icon: { path: g.SymbolPath.CIRCLE, scale: starred ? 11 : 8, fillColor: starred ? GOLD : color, fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 },
           });
-          // Hover shows a quick preview; click opens the full history modal
-          // (same action a table row's click does — including selection, now
-          // handled there instead of a fiddly button embedded in this popup).
+          // Hover shows a quick preview with a select checkbox (handy for
+          // building a list straight off the map); click opens the full
+          // history modal, same as a table row's click.
           marker.addListener('mouseover', () => {
+            currentRow = r;
             const price = fmtMoney(mode === 'prospects' ? r.last_list_price : r.orig_list_price);
+            const checked = selectedRef.current.has(r.group_key) ? 'checked' : '';
             info.setContent(
               '<div style="font-family:Jost,sans-serif;max-width:220px;color:#1c2b33">' +
-              '<div style="font-weight:700;font-size:15px">' + (r.address || '') + '</div>' +
+              '<label style="display:flex;align-items:center;gap:7px;cursor:pointer;margin-bottom:4px">' +
+              '<input type="checkbox" id="ms-pin-cb" ' + checked + ' />' +
+              '<span style="font-weight:700;font-size:15px">' + (r.address || '') + '</span>' +
+              '</label>' +
               '<div style="font-size:14px;font-weight:600;margin:2px 0 4px">' + price + '</div>' +
               '<div style="font-size:12px;color:#6a7a82">' + [rowStatus, r.subdivision || r.neighborhood].filter(Boolean).join(' · ') + '</div>' +
               (r.tag ? '<div style="font-size:11.5px;color:#296190;margin-top:4px">#' + r.tag + '</div>' : '') +
