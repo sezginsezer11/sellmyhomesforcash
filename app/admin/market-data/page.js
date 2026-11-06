@@ -574,6 +574,11 @@ function SearchTab({ token }) {
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [timelineIndex, setTimelineIndex] = useState(-1); // position within sortedRows, for Prev/Next
   const [showDetails, setShowDetails] = useState(false);
+  const [addingManualSale, setAddingManualSale] = useState(false);
+  const [manualSaleDate, setManualSaleDate] = useState('');
+  const [manualSalePrice, setManualSalePrice] = useState('');
+  const [manualSaleBusy, setManualSaleBusy] = useState(false);
+  const [manualSaleMsg, setManualSaleMsg] = useState('');
   const [addrCopied, setAddrCopied] = useState(false);
   const [selected, setSelected] = useState(() => new Set());
   const [lists, setLists] = useState([]);
@@ -747,12 +752,43 @@ function SearchTab({ token }) {
     setTimelineKey(groupKey); setTimeline([]); setTimelineLoading(true);
     setTimelineIndex(index != null ? index : -1);
     setShowDetails(false);
+    setAddingManualSale(false); setManualSaleDate(''); setManualSalePrice(''); setManualSaleMsg('');
     try {
       const res = await fetch('/api/market-data?group_key=' + encodeURIComponent(groupKey), { headers: { Authorization: 'Bearer ' + token() } });
       const j = await res.json();
       if (j.ok) setTimeline(j.listings || []);
     } catch {}
     setTimelineLoading(false);
+  };
+
+  const saveManualSale = async () => {
+    if (!manualSaleDate) { setManualSaleMsg('Pick a sale date.'); return; }
+    setManualSaleBusy(true); setManualSaleMsg('');
+    try {
+      const res = await fetch('/api/market-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+        body: JSON.stringify({ action: 'add_manual_sale', group_key: timelineKey, sale_date: manualSaleDate, sale_price: manualSalePrice }),
+      });
+      const j = await res.json();
+      if (j.ok) {
+        setAddingManualSale(false); setManualSaleDate(''); setManualSalePrice('');
+        await openTimeline(timelineKey, timelineIndex);
+        runSearch(); // the property may now drop out of Prospects-only results
+      } else setManualSaleMsg(j.error || 'Could not save.');
+    } catch { setManualSaleMsg('Error saving.'); }
+    setManualSaleBusy(false);
+  };
+
+  const removeManualSale = async (mlsNumber) => {
+    if (!window.confirm('Remove this off-MLS sale entry?')) return;
+    try {
+      await fetch('/api/market-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+        body: JSON.stringify({ action: 'remove_manual_sale', mls_number: mlsNumber }),
+      });
+      await openTimeline(timelineKey, timelineIndex);
+      runSearch();
+    } catch {}
   };
 
   const goToTimeline = (delta) => {
@@ -1093,6 +1129,7 @@ function SearchTab({ token }) {
                       setAddrCopied(true); setTimeout(() => setAddrCopied(false), 1500);
                     }}>{addrCopied ? 'Copied ✓' : 'Copy'}</button>
                     <button className="m-inlinebtn" onClick={() => setShowDetails((d) => !d)}>{showDetails ? 'Hide details' : 'Details'}</button>
+                    <button className="m-inlinebtn" onClick={() => setAddingManualSale((v) => !v)}>{addingManualSale ? 'Cancel' : '+ Off-MLS sale'}</button>
                   </div>
                   <div className="m-modallinks">
                     {timelineProperty.address && (
@@ -1116,6 +1153,17 @@ function SearchTab({ token }) {
                     timelineProperty.living_area && `${Number(timelineProperty.living_area).toLocaleString()} sqft`]
                     .filter(Boolean).join(' · ')}
                 </div>
+                {addingManualSale && (
+                  <div className="m-manualform">
+                    <div className="m-manualhint">Record a sale that never showed up on the MLS — this drops the property out of Prospects-only results.</div>
+                    <div className="m-manualrow">
+                      <TypedDateInput value={manualSaleDate} onChange={setManualSaleDate} title="Sale date" />
+                      <input type="number" placeholder="Sale price (optional)" value={manualSalePrice} onChange={(e) => setManualSalePrice(e.target.value)} />
+                      <button className="m-inlinebtn primary" onClick={saveManualSale} disabled={manualSaleBusy}>{manualSaleBusy ? 'Saving…' : 'Save'}</button>
+                    </div>
+                    {manualSaleMsg && <div className="m-manualmsg">{manualSaleMsg}</div>}
+                  </div>
+                )}
                 {showDetails && (
                   <div className="m-detailsgrid">
                     <div><span>APN</span><b>{timelineProperty.apn_normalized || '—'}</b></div>
@@ -1133,23 +1181,27 @@ function SearchTab({ token }) {
             <div className="m-modalbody">
               {timelineLoading ? <p>Loading…</p> : timeline.length === 0 ? <p>No history found.</p> : (
                 <div className="m-timeline">
-                  {timeline.map((t) => (
+                  {timeline.map((t) => {
+                    const isManual = (t.mls_number || '').startsWith('MANUAL-');
+                    return (
                     <div className="m-tlrow" key={t.id}>
-                      <div className="m-tlstatus"><span className="m-status">{t.status_normalized}</span></div>
+                      <div className="m-tlstatus"><span className="m-status">{isManual ? 'off-mls sale' : t.status_normalized}</span></div>
                       <div className="m-tlbody">
-                        <div className="m-tlmls">MLS# {t.mls_number}</div>
+                        <div className="m-tlmls">{isManual ? 'Manually added' : `MLS# ${t.mls_number}`}</div>
                         <div className="m-tldates">
-                          {t.listing_contract_date && <span>Listed {fmtDate(t.listing_contract_date)}</span>}
-                          {t.off_market_date && <span>Off-market {fmtDate(t.off_market_date)}</span>}
-                          {t.close_date && <span>Closed {fmtDate(t.close_date)}</span>}
+                          {t.listing_contract_date && !isManual && <span>Listed {fmtDate(t.listing_contract_date)}</span>}
+                          {t.off_market_date && <span>{isManual ? 'Sold' : 'Off-market'} {fmtDate(t.off_market_date)}</span>}
+                          {t.close_date && !isManual && <span>Closed {fmtDate(t.close_date)}</span>}
                         </div>
                         <div className="m-tlprices">
-                          {t.orig_list_price != null && <span>Orig {fmtMoney(t.orig_list_price)}</span>}
-                          {t.close_price != null && <span>Close {fmtMoney(t.close_price)}</span>}
+                          {t.orig_list_price != null && <span>{isManual ? 'Price' : 'Orig'} {fmtMoney(t.orig_list_price)}</span>}
+                          {t.close_price != null && !isManual && <span>Close {fmtMoney(t.close_price)}</span>}
+                          {isManual && <button className="m-inlinebtn" onClick={() => removeManualSale(t.mls_number)}>Remove</button>}
                         </div>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -1583,6 +1635,13 @@ const css = `
   .m-modaladdr { font-weight: 700; font-size: 15px; color: #1c2b33; }
   .m-inlinebtn { background: none; border: 0; color: #b8341f; font-family: 'Jost',sans-serif; font-size: 12.5px; font-weight: 600; cursor: pointer; padding: 0; }
   .m-inlinebtn:hover { text-decoration: underline; }
+  .m-inlinebtn:disabled { opacity: .5; cursor: default; text-decoration: none; }
+  .m-inlinebtn.primary { color: #1c5b34; }
+  .m-manualform { margin-top: 10px; padding: 10px 12px; background: #fff; border: 1px solid #bcd2e4; border-radius: 8px; }
+  .m-manualhint { font-size: 12px; color: #6a7a82; margin-bottom: 8px; }
+  .m-manualrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .m-manualrow input[type="number"] { padding: 7px 9px; border: 1px solid #d5dbdf; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13px; width: 150px; }
+  .m-manualmsg { font-size: 12px; color: #8a2020; margin-top: 6px; }
   .m-modallinks { display: flex; gap: 8px; }
   .m-mapsbtn { font-size: 12.5px; font-weight: 600; color: #296190; text-decoration: none; white-space: nowrap; border: 1px solid #bcd2e4; border-radius: 6px; padding: 5px 10px; }
   .m-mapsbtn:hover { background: #eaf2fa; }

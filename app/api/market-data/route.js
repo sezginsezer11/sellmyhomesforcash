@@ -249,6 +249,57 @@ export async function POST(request) {
       return NextResponse.json({ ok: true });
     }
 
+    // Records a sale that happened off-MLS (never shows up in any CSV export) —
+    // inserted as a normal mls_listings row with a synthetic MLS #, so the
+    // existing "latest episode per group_key" logic mls_prospects already uses
+    // picks it up automatically: a sale date after the last real episode makes
+    // status_normalized='sold' win, which drops the property out of Prospects
+    // with no special-casing anywhere else. Re-uploading real MLS data later
+    // never touches this row (different mls_number), so it can't be clobbered.
+    if (body.action === 'add_manual_sale') {
+      const groupKey = (body.group_key || '').toString();
+      const saleDate = (body.sale_date || '').toString();
+      const salePrice = body.sale_price != null && body.sale_price !== '' ? Number(body.sale_price) : null;
+      const notes = (body.notes || '').toString().slice(0, 500);
+      if (!groupKey || !saleDate) return NextResponse.json({ ok: false, error: 'group_key and sale_date required.' }, { status: 400 });
+
+      const { data: ref, error: refErr } = await supabaseAdmin
+        .from('mls_listings').select('*').eq('group_key', groupKey).order('id', { ascending: false }).limit(1).single();
+      if (refErr || !ref) return NextResponse.json({ ok: false, error: 'Property not found.' }, { status: 404 });
+
+      const insert = {
+        mls_number: `MANUAL-${groupKey}-${Date.now()}`,
+        apn_raw: ref.apn_raw, apn_normalized: ref.apn_normalized, address_key: ref.address_key,
+        group_key: groupKey, flagged: ref.flagged,
+        address: ref.address, postal_code: ref.postal_code,
+        subdivision: ref.subdivision, neighborhood: ref.neighborhood, mls_area: ref.mls_area,
+        property_sub_type: ref.property_sub_type, beds_total: ref.beds_total, baths_total: ref.baths_total,
+        living_area: ref.living_area, lot_size_sqft: ref.lot_size_sqft, year_built: ref.year_built,
+        orig_list_price: salePrice, current_price: salePrice, close_price: salePrice,
+        listing_contract_date: saleDate, off_market_date: saleDate, close_date: saleDate,
+        status_raw: 'Off-MLS sale (manual entry)', status_normalized: 'sold',
+        raw: { manual: true, notes, added_at: new Date().toISOString() },
+        source_filename: 'manual-entry',
+      };
+      // lat/lng/community_name were added in later migrations — keep this working
+      // even if one hasn't been run on this database yet.
+      if ('lat' in ref) insert.lat = ref.lat;
+      if ('lng' in ref) insert.lng = ref.lng;
+      if ('community_name' in ref) insert.community_name = ref.community_name;
+
+      const { error } = await supabaseAdmin.from('mls_listings').insert(insert);
+      if (error) { console.error(error); return NextResponse.json({ ok: false, error: 'Could not save.' }, { status: 500 }); }
+      return NextResponse.json({ ok: true, mls_number: insert.mls_number });
+    }
+
+    if (body.action === 'remove_manual_sale') {
+      const mlsNumber = (body.mls_number || '').toString();
+      if (!mlsNumber.startsWith('MANUAL-')) return NextResponse.json({ ok: false, error: 'Invalid.' }, { status: 400 });
+      const { error } = await supabaseAdmin.from('mls_listings').delete().eq('mls_number', mlsNumber);
+      if (error) { console.error(error); return NextResponse.json({ ok: false, error: 'Could not remove.' }, { status: 500 }); }
+      return NextResponse.json({ ok: true });
+    }
+
     // Shares a selection directly, with no existing/named list required — still
     // backed by a real (auto-named) list under the hood, since that's what the
     // slug/revoke machinery is built on, but the admin never has to name one.
