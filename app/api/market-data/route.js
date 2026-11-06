@@ -4,6 +4,32 @@ import { parseMlsCsv } from '../../../lib/mls';
 import { geocodeAddress } from '../../../lib/sheets';
 import { parseKml, matchCommunity } from '../../../lib/kml';
 
+// Geocodes a batch concurrently (a few at a time) instead of one address at a
+// time — each address is otherwise 2-4 sequential network round trips (cache
+// lookup, Google API, cache write, DB write), which made a 25-address batch
+// take 10-20s. 5 at once is a safe margin under Google's rate limits while
+// cutting wall-clock time roughly 5x.
+async function geocodeSeenAddresses(seen, concurrency = 5) {
+  const entries = Array.from(seen.values());
+  let geocoded = 0, failed = 0;
+  for (let i = 0; i < entries.length; i += concurrency) {
+    const slice = entries.slice(i, i + concurrency);
+    await Promise.all(slice.map(async ({ address, postal_code }) => {
+      const geo = await geocodeAddress(address, postal_code);
+      if (geo && geo.lat != null) {
+        geocoded++;
+        await supabaseAdmin.from('mls_listings').update({ lat: geo.lat, lng: geo.lng }).eq('address', address);
+      } else {
+        failed++;
+        // 0,0 is a sentinel for "tried, couldn't geocode" so it isn't retried
+        // every batch forever — falsy lat/lng is already treated as "not plottable".
+        await supabaseAdmin.from('mls_listings').update({ lat: 0, lng: 0 }).eq('address', address);
+      }
+    }));
+  }
+  return { geocoded, failed };
+}
+
 function isAdminEmail(email) {
   const list = (process.env.ADMIN_EMAILS || 'sez@carmelvalley.com')
     .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
@@ -130,19 +156,7 @@ export async function POST(request) {
         if (seen.size >= limit) break;
       }
 
-      let geocoded = 0, failed = 0;
-      for (const { address, postal_code } of seen.values()) {
-        const geo = await geocodeAddress(address, postal_code);
-        if (geo && geo.lat != null) {
-          geocoded++;
-          await supabaseAdmin.from('mls_listings').update({ lat: geo.lat, lng: geo.lng }).eq('address', address);
-        } else {
-          failed++;
-          // 0,0 is a sentinel for "tried, couldn't geocode" so it isn't retried every
-          // batch forever — the map already treats falsy lat/lng as "not plottable".
-          await supabaseAdmin.from('mls_listings').update({ lat: 0, lng: 0 }).eq('address', address);
-        }
-      }
+      const { geocoded, failed } = await geocodeSeenAddresses(seen);
 
       const { count: remaining } = await supabaseAdmin
         .from('mls_listings').select('*', { count: 'exact', head: true }).is('lat', null).not('address', 'is', null);
@@ -174,17 +188,7 @@ export async function POST(request) {
         if (seen.size >= limit) break;
       }
 
-      let geocoded = 0, failed = 0;
-      for (const { address, postal_code } of seen.values()) {
-        const geo = await geocodeAddress(address, postal_code);
-        if (geo && geo.lat != null) {
-          geocoded++;
-          await supabaseAdmin.from('mls_listings').update({ lat: geo.lat, lng: geo.lng }).eq('address', address);
-        } else {
-          failed++;
-          await supabaseAdmin.from('mls_listings').update({ lat: 0, lng: 0 }).eq('address', address);
-        }
-      }
+      const { geocoded, failed } = await geocodeSeenAddresses(seen);
 
       const { count: remaining } = await supabaseAdmin
         .from('mls_prospects').select('*', { count: 'exact', head: true }).is('lat', null).not('address', 'is', null);
