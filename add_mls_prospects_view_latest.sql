@@ -1,7 +1,7 @@
 -- Run this in Supabase > SQL Editor for the sellmyhomesforcash project.
 -- THE authoritative, current definition of mls_prospects — includes everything
--- (starred, tag, lat, lng, postal_code). Safe to re-run any time the view
--- seems to be missing a column; it always rebuilds from scratch.
+-- (starred, tag, lat, lng, postal_code, community_name). Safe to re-run any
+-- time the view seems to be missing a column; it always rebuilds from scratch.
 
 drop view if exists public.mls_prospects;
 create view public.mls_prospects as
@@ -50,6 +50,7 @@ select
   latest.tag,
   latest.address,
   latest.postal_code,
+  latest.community_name,
   latest.subdivision,
   latest.neighborhood,
   latest.mls_area,

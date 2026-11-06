@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '../../../lib/supabase';
 import { parseMlsCsv } from '../../../lib/mls';
 import { geocodeAddress } from '../../../lib/sheets';
+import { parseKml, matchCommunity } from '../../../lib/kml';
 
 function isAdminEmail(email) {
   const list = (process.env.ADMIN_EMAILS || 'sez@carmelvalley.com')
@@ -31,7 +32,7 @@ function rand(n = 4) {
 // or APN — only what's safe to hand a client directly (per explicit MLS
 // compliance decision: the admin tool's data stays admin-only otherwise).
 const PUBLIC_LIST_FIELDS = [
-  'group_key', 'address', 'postal_code', 'subdivision', 'neighborhood', 'mls_area',
+  'group_key', 'address', 'postal_code', 'community_name', 'subdivision', 'neighborhood', 'mls_area',
   'property_sub_type', 'beds_total', 'baths_total', 'living_area', 'lot_size_sqft',
   'year_built', 'lat', 'lng', 'off_market_date',
 ];
@@ -147,6 +148,61 @@ export async function POST(request) {
         .from('mls_listings').select('*', { count: 'exact', head: true }).is('lat', null).not('address', 'is', null);
 
       return NextResponse.json({ ok: true, geocoded, failed, processed: seen.size, remaining: remaining || 0 });
+    }
+
+    // Replaces the whole community_boundaries table with a freshly-uploaded
+    // KML export (the admin re-exports and re-uploads the entire map each
+    // time it's updated, rather than diffing individual shapes).
+    if (body.action === 'import_community_kml') {
+      const kmlText = (body.kml_text || '').toString();
+      if (!kmlText.trim()) return NextResponse.json({ ok: false, error: 'Empty file.' }, { status: 400 });
+      const parsed = parseKml(kmlText);
+      if (!parsed.length) return NextResponse.json({ ok: false, error: 'No placemarks found in this KML.' }, { status: 400 });
+
+      const { error: delErr } = await supabaseAdmin.from('community_boundaries').delete().not('id', 'is', null);
+      if (delErr) { console.error(delErr); return NextResponse.json({ ok: false, error: 'Could not clear old boundaries.' }, { status: 500 }); }
+
+      const rows = parsed.map((p) => ({ name: p.name, layer: p.layer, geometry_type: p.type, ring: p.ring }));
+      const { error: insErr } = await supabaseAdmin.from('community_boundaries').insert(rows);
+      if (insErr) { console.error(insErr); return NextResponse.json({ ok: false, error: 'Could not save boundaries.' }, { status: 500 }); }
+
+      // The new shapes may not match the old ones (renamed/redrawn) — clear
+      // existing matches so "Match communities" re-checks everything fresh.
+      await supabaseAdmin.from('mls_listings').update({ community_name: null }).not('community_name', 'is', null);
+
+      return NextResponse.json({ ok: true, imported: rows.length, polygons: rows.filter((r) => r.geometry_type === 'polygon').length });
+    }
+
+    // Matches a bounded batch of not-yet-checked, geocoded listings against the
+    // uploaded community polygons — same looped-bounded-batch shape as geocoding.
+    if (body.action === 'match_communities') {
+      const limit = Math.min(Number(body.limit) || 200, 500);
+      const { data: polygons, error: polyErr } = await supabaseAdmin.from('community_boundaries').select('name, geometry_type, ring');
+      if (polyErr) { console.error(polyErr); return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 }); }
+      if (!polygons || !polygons.length) return NextResponse.json({ ok: false, error: 'No community boundaries uploaded yet.' }, { status: 400 });
+
+      const { data: candidates, error: candErr } = await supabaseAdmin
+        .from('mls_listings')
+        .select('id, lat, lng')
+        .is('community_name', null)
+        .not('lat', 'is', null)
+        .neq('lat', 0)
+        .order('id', { ascending: true })
+        .limit(limit);
+      if (candErr) { console.error(candErr); return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 }); }
+
+      let matched = 0, unmatched = 0;
+      for (const row of candidates || []) {
+        const name = matchCommunity(Number(row.lat), Number(row.lng), polygons);
+        if (name) matched++; else unmatched++;
+        // '' (not null) marks "checked, no polygon contains this point" so it isn't retried forever.
+        await supabaseAdmin.from('mls_listings').update({ community_name: name || '' }).eq('id', row.id);
+      }
+
+      const { count: remaining } = await supabaseAdmin
+        .from('mls_listings').select('*', { count: 'exact', head: true }).is('community_name', null).not('lat', 'is', null).neq('lat', 0);
+
+      return NextResponse.json({ ok: true, matched, unmatched, processed: (candidates || []).length, remaining: remaining || 0 });
     }
 
     if (body.action === 'create_list') {
@@ -327,7 +383,7 @@ export async function POST(request) {
 }
 
 const SEARCH_FIELDS_PROSPECTS = [
-  'group_key', 'apn_normalized', 'flagged', 'last_id', 'last_mls_number', 'starred', 'tag', 'address', 'postal_code', 'subdivision',
+  'group_key', 'apn_normalized', 'flagged', 'last_id', 'last_mls_number', 'starred', 'tag', 'address', 'postal_code', 'community_name', 'subdivision',
   'neighborhood', 'mls_area', 'property_sub_type', 'beds_total', 'baths_total', 'living_area',
   'lot_size_sqft', 'year_built', 'last_status', 'last_list_price', 'last_current_price',
   'original_list_price', 'last_off_market_date', 'days_since_off_market',
@@ -407,6 +463,19 @@ export async function GET(request) {
       return NextResponse.json({ ok: true, sub_types: Array.from(seen).sort() });
     }
 
+    // Distinct mapped community names actually matched (from the imported KML
+    // polygons) — distinct from the raw/messy MLS subdivision text search.
+    if (url.searchParams.get('communities') === '1') {
+      const { data, error } = await fetchAllPaginated(() => supabaseAdmin.from('mls_listings').select('community_name').not('community_name', 'is', null).neq('community_name', ''));
+      if (error) {
+        if (error.code === '42703') return NextResponse.json({ ok: true, communities: [] }); // not migrated yet
+        return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 });
+      }
+      const seen = new Set();
+      for (const r of data || []) { const v = (r.community_name || '').trim(); if (v) seen.add(v); }
+      return NextResponse.json({ ok: true, communities: Array.from(seen).sort() });
+    }
+
     // Upload history, most recent first — so the admin can see which name/client
     // a past CSV drop was for.
     if (url.searchParams.get('uploads') === '1') {
@@ -477,6 +546,7 @@ export async function GET(request) {
     const zip = (url.searchParams.get('zip') || '').trim();
     // Comma-separated — any of several statuses/types/lists at once. Empty means no filter.
     const splitCsv = (v) => (v || '').trim().split(',').map((s) => s.trim()).filter(Boolean);
+    const mappedCommunities = splitCsv(url.searchParams.get('mapped_community'));
     const statuses = splitCsv(url.searchParams.get('status'));
     const offFrom = url.searchParams.get('off_from') || '';
     const offTo = url.searchParams.get('off_to') || '';
@@ -507,11 +577,12 @@ export async function GET(request) {
       // lat/lng were added in a later migration — if it hasn't been run yet on this
       // database, selecting them by name 400s the whole query (PostgREST error
       // 42703). Fall back to the same search without them rather than show nothing.
-      const buildProspectsQuery = (fields, includePostal = true) => () => {
+      const buildProspectsQuery = (fields, includeNewCols = true) => () => {
         let q = supabaseAdmin.from('mls_prospects').select(fields.join(','));
         if (community) q = q.or(`subdivision.ilike.%${escLike(community)}%,neighborhood.ilike.%${escLike(community)}%,mls_area.ilike.%${escLike(community)}%`);
         if (address) q = q.ilike('address', `%${escLike(address)}%`);
-        if (zip && includePostal) q = q.eq('postal_code', zip);
+        if (zip && includeNewCols) q = q.eq('postal_code', zip);
+        if (mappedCommunities.length && includeNewCols) q = q.in('community_name', mappedCommunities);
         if (statuses.length) q = q.in('last_status', statuses);
         if (offFrom) q = q.gte('last_off_market_date', offFrom);
         if (offTo) q = q.lte('last_off_market_date', offTo);
@@ -528,9 +599,10 @@ export async function GET(request) {
 
       let { data, error } = await fetchAllPaginated(buildProspectsQuery(SEARCH_FIELDS_PROSPECTS));
       if (error && error.code === '42703') {
-        // Older databases may not have postal_code/lat/lng on the view yet — degrade
-        // gracefully (drop those fields and the zip filter) rather than show nothing.
-        ({ data, error } = await fetchAllPaginated(buildProspectsQuery(SEARCH_FIELDS_PROSPECTS.filter((f) => f !== 'lat' && f !== 'lng' && f !== 'postal_code'), false)));
+        // Older databases may not have postal_code/community_name/lat/lng on the
+        // view yet — degrade gracefully (drop those fields and filters) rather
+        // than show nothing.
+        ({ data, error } = await fetchAllPaginated(buildProspectsQuery(SEARCH_FIELDS_PROSPECTS.filter((f) => f !== 'lat' && f !== 'lng' && f !== 'postal_code' && f !== 'community_name'), false)));
       }
       if (error) { console.error(error); return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 }); }
       const withLists = await attachListMemberships(data || []);
@@ -543,6 +615,7 @@ export async function GET(request) {
       if (community) q = q.or(`subdivision.ilike.%${escLike(community)}%,neighborhood.ilike.%${escLike(community)}%,mls_area.ilike.%${escLike(community)}%`);
       if (address) q = q.ilike('address', `%${escLike(address)}%`);
       if (zip) q = q.eq('postal_code', zip);
+      if (mappedCommunities.length) q = q.in('community_name', mappedCommunities);
       if (statuses.length) q = q.in('status_normalized', statuses);
       if (offFrom) q = q.gte('off_market_date', offFrom);
       if (offTo) q = q.lte('off_market_date', offTo);

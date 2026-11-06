@@ -53,7 +53,7 @@ export default function SharedList() {
             {sorted.map((r) => (
               <div className={'s-card' + (highlightKey === r.group_key ? ' on' : '')} key={r.group_key} onClick={() => setHighlightKey(r.group_key)}>
                 <div className="s-addr">{r.address}</div>
-                <div className="s-sub">{[r.subdivision || r.neighborhood || r.mls_area, r.property_sub_type].filter(Boolean).join(' · ')}</div>
+                <div className="s-sub">{[r.community_name || r.subdivision || r.neighborhood || r.mls_area, r.property_sub_type].filter(Boolean).join(' · ')}</div>
                 <div className="s-specs">
                   {[r.beds_total && `${r.beds_total} bd`, r.baths_total && `${r.baths_total} ba`,
                     r.living_area && `${Number(r.living_area).toLocaleString()} sqft`,
@@ -190,7 +190,7 @@ function SharedMap({ rows, highlightKey, onPinClick }) {
             position: pos, map, title: r.address,
             icon: { path: g.SymbolPath.CIRCLE, scale: 9, fillColor: BLUE, fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 },
           });
-          const community = r.subdivision || r.neighborhood || r.mls_area;
+          const community = r.community_name || r.subdivision || r.neighborhood || r.mls_area;
           const sub = [community, r.property_sub_type].filter(Boolean).join(' · ');
           const specs = [r.beds_total && `${r.beds_total} bd`, r.baths_total && `${r.baths_total} ba`,
             r.living_area && `${Number(r.living_area).toLocaleString()} sqft`,

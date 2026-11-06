@@ -77,8 +77,46 @@ function UploadTab({ token }) {
   const [uploadName, setUploadName] = useState('');
   const [pastUploads, setPastUploads] = useState([]);
   const [loadingPast, setLoadingPast] = useState(true);
+  const [kmlBusy, setKmlBusy] = useState(false);
+  const [kmlMsg, setKmlMsg] = useState('');
+  const [matching, setMatching] = useState(false);
+  const [matchProgress, setMatchProgress] = useState(null); // { matched, unmatched, remaining }
+  const kmlInputRef = useRef(null);
   const fileInputRef = useRef(null);
   const nameReady = uploadName.trim().length > 0;
+
+  const uploadKml = async (file) => {
+    setKmlBusy(true); setKmlMsg('');
+    try {
+      const text = await file.text();
+      const res = await fetch('/api/market-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+        body: JSON.stringify({ action: 'import_community_kml', kml_text: text }),
+      });
+      const j = await res.json();
+      setKmlMsg(j.ok ? `Imported ${j.imported} shapes (${j.polygons} polygons) ✓ — run "Match communities" to apply them.` : (j.error || 'Import failed.'));
+    } catch { setKmlMsg('Import error.'); }
+    setKmlBusy(false);
+  };
+
+  const runMatchCommunities = async () => {
+    setMatching(true);
+    let matched = 0, unmatched = 0;
+    try {
+      while (true) {
+        const res = await fetch('/api/market-data', {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+          body: JSON.stringify({ action: 'match_communities', limit: 200 }),
+        });
+        const j = await res.json();
+        if (!j.ok) { setKmlMsg(j.error || 'Matching failed.'); break; }
+        matched += j.matched; unmatched += j.unmatched;
+        setMatchProgress({ matched, unmatched, remaining: j.remaining });
+        if (j.remaining <= 0 || j.processed === 0) break;
+      }
+    } catch {}
+    setMatching(false);
+  };
 
   const loadPastUploads = async () => {
     try {
@@ -191,6 +229,24 @@ function UploadTab({ token }) {
           </table>
         </div>
       )}
+
+      <div className="m-pasthead">Community map</div>
+      <p className="m-dim" style={{ marginBottom: 12 }}>
+        Upload the KML export of your Google My Maps community boundaries, then match it against every geocoded property
+        to get a reliable community name — independent of the MLS's own (often inconsistent) subdivision data.
+      </p>
+      <div className="m-kmlrow">
+        <button className="m-geocodebtn" onClick={() => kmlInputRef.current?.click()} disabled={kmlBusy}>
+          {kmlBusy ? 'Importing…' : 'Upload community KML'}
+        </button>
+        <input ref={kmlInputRef} type="file" accept=".kml" style={{ display: 'none' }}
+          onChange={(e) => { if (e.target.files?.[0]) uploadKml(e.target.files[0]); e.target.value = ''; }} />
+        <button className="m-geocodebtn" onClick={runMatchCommunities} disabled={matching}>
+          {matching ? 'Matching…' : 'Match communities'}
+        </button>
+        {matchProgress && <span className="m-dim">{matchProgress.matched} matched, {matchProgress.unmatched} no match, {matchProgress.remaining} left</span>}
+      </div>
+      {kmlMsg && <p className="m-dim" style={{ marginTop: 8 }}>{kmlMsg}</p>}
     </div>
   );
 }
@@ -269,7 +325,7 @@ function ListsTab({ token }) {
   };
 
   const exportCSV = () => {
-    const cols = ['address', 'subdivision', 'neighborhood', 'mls_area', 'property_sub_type', 'beds_total', 'baths_total', 'living_area', 'status_normalized', 'orig_list_price', 'off_market_date', 'tag'];
+    const cols = ['address', 'community_name', 'subdivision', 'neighborhood', 'mls_area', 'property_sub_type', 'beds_total', 'baths_total', 'living_area', 'status_normalized', 'orig_list_price', 'off_market_date', 'tag'];
     const esc = (v) => '"' + (v == null ? '' : String(v).replace(/"/g, '""')) + '"';
     const csv = [cols.join(',')].concat(openRows.map((r) => cols.map((c) => esc(r[c])).join(','))).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -363,7 +419,7 @@ function ListsTab({ token }) {
                   {openRows.map((r) => (
                     <tr key={r.group_key}>
                       <td className="m-addr">{r.address}</td>
-                      <td>{r.subdivision || r.neighborhood || r.mls_area || '—'}</td>
+                      <td>{r.community_name || r.subdivision || r.neighborhood || r.mls_area || '—'}</td>
                       <td><span className="m-status" style={{ background: (STATUS_COLOR[r.status_normalized] || '#6a7a82') + '1c', color: STATUS_COLOR[r.status_normalized] || '#6a7a82' }}>{r.status_normalized}</span></td>
                       <td>{r.tag || '—'}</td>
                       <td className="m-r">{fmtMoney(r.orig_list_price)}</td>
@@ -547,6 +603,18 @@ function SearchTab({ token }) {
     })();
   }, []);
 
+  const [mappedCommunities, setMappedCommunities] = useState([]);
+  const [communityOptions, setCommunityOptions] = useState([]);
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/market-data?communities=1', { headers: { Authorization: 'Bearer ' + token() } });
+        const j = await res.json();
+        if (j.ok) setCommunityOptions(j.communities || []);
+      } catch {}
+    })();
+  }, []);
+
   const toggleSelect = (groupKey) => {
     setSelected((s) => {
       const next = new Set(s);
@@ -656,6 +724,7 @@ function SearchTab({ token }) {
       status: statuses.join(','), community, address, zip, off_from: offFrom, off_to: offTo,
       price_min: priceMin, price_max: priceMax, sqft_min: sqftMin, sqft_max: sqftMax,
       beds, sub_type: subTypes.join(','), filter_list_id: listFilters.join(','), tag: tagFilter,
+      mapped_community: mappedCommunities.join(','),
     });
     try {
       const res = await fetch('/api/market-data?' + params.toString(), { headers: { Authorization: 'Bearer ' + token() } });
@@ -669,7 +738,7 @@ function SearchTab({ token }) {
     setCommunity(''); setAddress(''); setZip(''); setStatuses([]);
     setOffFrom(''); setOffTo(''); setPriceMin(''); setPriceMax('');
     setSqftMin(''); setSqftMax(''); setBeds(''); setSubTypes([]);
-    setListFilters([]); setTagFilter('');
+    setListFilters([]); setTagFilter(''); setMappedCommunities([]);
   };
 
   const openTimeline = async (groupKey, index) => {
@@ -703,7 +772,7 @@ function SearchTab({ token }) {
       case 'star': return isStarred(r) ? 1 : 0;
       case 'tag': return (r.tag || '').toLowerCase() || '￿'; // blanks sort last
       case 'address': return (r.address || '').toLowerCase();
-      case 'community': return (r.subdivision || r.neighborhood || r.mls_area || '').toLowerCase();
+      case 'community': return (r.community_name || r.subdivision || r.neighborhood || r.mls_area || '').toLowerCase();
       case 'status': return mode === 'prospects' ? (r.last_status || '') : (r.status_normalized || '');
       case 'price': return (mode === 'prospects' ? r.last_list_price : r.orig_list_price) ?? -1;
       case 'off_market': return (mode === 'prospects' ? r.last_off_market_date : r.off_market_date) || '';
@@ -749,8 +818,8 @@ function SearchTab({ token }) {
 
   const exportCSV = () => {
     const cols = mode === 'prospects'
-      ? ['address', 'subdivision', 'neighborhood', 'mls_area', 'property_sub_type', 'beds_total', 'baths_total', 'living_area', 'last_status', 'last_list_price', 'original_list_price', 'last_off_market_date', 'days_since_off_market', 'total_listings', 'times_listed_without_selling']
-      : ['address', 'subdivision', 'neighborhood', 'mls_area', 'property_sub_type', 'beds_total', 'baths_total', 'living_area', 'status_normalized', 'orig_list_price', 'current_price', 'close_price', 'listing_contract_date', 'off_market_date', 'close_date', 'mls_number'];
+      ? ['address', 'community_name', 'subdivision', 'neighborhood', 'mls_area', 'property_sub_type', 'beds_total', 'baths_total', 'living_area', 'last_status', 'last_list_price', 'original_list_price', 'last_off_market_date', 'days_since_off_market', 'total_listings', 'times_listed_without_selling']
+      : ['address', 'community_name', 'subdivision', 'neighborhood', 'mls_area', 'property_sub_type', 'beds_total', 'baths_total', 'living_area', 'status_normalized', 'orig_list_price', 'current_price', 'close_price', 'listing_contract_date', 'off_market_date', 'close_date', 'mls_number'];
     const esc = (v) => '"' + (v == null ? '' : String(v).replace(/"/g, '""')) + '"';
     const csv = [cols.join(',')].concat(rows.map((r) => cols.map((c) => esc(r[c])).join(','))).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -791,7 +860,13 @@ function SearchTab({ token }) {
 
       <form className="m-filters" onSubmit={runSearch}>
         <input placeholder="Address…" value={address} onChange={(e) => setAddress(e.target.value)} />
-        <input placeholder="Community (subdivision, neighborhood, or area)…" value={community} onChange={(e) => setCommunity(e.target.value)} />
+        <input placeholder="Community (MLS text search)…" value={community} onChange={(e) => setCommunity(e.target.value)} />
+        <MultiSelect
+          placeholder="Any mapped community"
+          options={communityOptions.map((c) => ({ value: c, label: c }))}
+          selected={mappedCommunities}
+          onChange={setMappedCommunities}
+        />
         <input placeholder="Zip…" className="m-zipinput" value={zip} onChange={(e) => setZip(e.target.value)} />
         <MultiSelect
           placeholder="All statuses"
@@ -920,7 +995,7 @@ function SearchTab({ token }) {
                       <button className={'m-starbtn' + (isStarred(r) ? ' on' : '')} onClick={() => toggleStar(r)}>★</button>
                     </td>
                     <td className="m-addr">{r.address}{r.flagged && <span className="m-flag" title="No APN — matched by address">⚑</span>}</td>
-                    <td>{r.subdivision || r.neighborhood || r.mls_area || '—'}</td>
+                    <td>{r.community_name || r.subdivision || r.neighborhood || r.mls_area || '—'}</td>
                     <td><span className="m-status" style={{ background: (STATUS_COLOR[r.last_status] || '#6a7a82') + '1c', color: STATUS_COLOR[r.last_status] || '#6a7a82' }}>{r.last_status}</span></td>
                     <td onClick={(e) => e.stopPropagation()}>
                       <input className="m-taginput" placeholder="+ tag" value={r.tag || ''}
@@ -941,7 +1016,7 @@ function SearchTab({ token }) {
                       <button className={'m-starbtn' + (isStarred(r) ? ' on' : '')} title={r.is_current_prospect ? 'Currently a prospect' : ''} onClick={() => toggleStar(r)}>★</button>
                     </td>
                     <td className="m-addr">{r.address}{r.flagged && <span className="m-flag" title="No APN — matched by address">⚑</span>}</td>
-                    <td>{r.subdivision || r.neighborhood || r.mls_area || '—'}</td>
+                    <td>{r.community_name || r.subdivision || r.neighborhood || r.mls_area || '—'}</td>
                     <td><span className="m-status" style={{ background: (STATUS_COLOR[r.status_normalized] || '#6a7a82') + '1c', color: STATUS_COLOR[r.status_normalized] || '#6a7a82' }}>{r.status_normalized}</span></td>
                     <td onClick={(e) => e.stopPropagation()}>
                       <input className="m-taginput" placeholder="+ tag" value={r.tag || ''}
@@ -1007,7 +1082,7 @@ function SearchTab({ token }) {
                   </div>
                 </div>
                 <div className="m-modalsub">
-                  {[timelineProperty.subdivision || timelineProperty.neighborhood || timelineProperty.mls_area,
+                  {[timelineProperty.community_name || timelineProperty.subdivision || timelineProperty.neighborhood || timelineProperty.mls_area,
                     timelineProperty.beds_total && `${timelineProperty.beds_total} bd`,
                     timelineProperty.baths_total && `${timelineProperty.baths_total} ba`,
                     timelineProperty.living_area && `${Number(timelineProperty.living_area).toLocaleString()} sqft`]
@@ -1206,7 +1281,7 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelec
               '<span style="font-weight:700;font-size:15px">' + (r.address || '') + '</span>' +
               '</label>' +
               '<div style="font-size:14px;font-weight:600;margin:2px 0 4px">' + price + '</div>' +
-              '<div style="font-size:12px;color:#6a7a82">' + [rowStatus, r.subdivision || r.neighborhood].filter(Boolean).join(' · ') + '</div>' +
+              '<div style="font-size:12px;color:#6a7a82">' + [rowStatus, r.community_name || r.subdivision || r.neighborhood].filter(Boolean).join(' · ') + '</div>' +
               (r.tag ? '<div style="font-size:11.5px;color:#296190;margin-top:4px">#' + r.tag + '</div>' : '') +
               '</div>'
             );
@@ -1305,6 +1380,8 @@ const css = `
   .m-viewbtn.on { background: #fff; color: #296190; box-shadow: 0 1px 3px rgba(20,40,60,.12); }
   .m-geocodebar { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: #fdf3da; border: 1px solid #f0e2b8; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px; color: #6a5215; }
   .m-geocodebtn { padding: 7px 14px; background: #296190; color: #fff; border: 0; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .m-geocodebtn:disabled { opacity: .55; cursor: default; }
+  .m-kmlrow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .m-mapwrap { border: 1px solid #e6e9ec; border-radius: 8px; overflow: hidden; background: #fff; }
   .m-map { width: 100%; height: 520px; }
   .m-mapmsg { padding: 40px 20px; text-align: center; color: #6a7a82; font-size: 13.5px; }
