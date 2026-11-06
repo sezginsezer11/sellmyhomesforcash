@@ -1165,6 +1165,7 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelec
   const ref = useRef(null);
   const [status, setStatus] = useState('loading'); // loading | ok | nocoords | noauth
   const [drawingActive, setDrawingActive] = useState(false);
+  const [drawingAvailable, setDrawingAvailable] = useState(false);
 
   // Read via refs inside the map effect below, which intentionally doesn't
   // rebuild on every selection toggle (that would reset pan/zoom each click).
@@ -1295,7 +1296,6 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelec
         await ensureLoader();
         const { Map, InfoWindow } = await window.google.maps.importLibrary('maps');
         const { Marker } = await window.google.maps.importLibrary('marker');
-        const { DrawingManager } = await window.google.maps.importLibrary('drawing');
         const refReady = await waitForRef();
         if (cancelled || !refReady || !ref.current || builtRef.current) return;
         builtRef.current = true;
@@ -1351,33 +1351,39 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelec
         });
         map.fitBounds(bounds, 60);
         g.event.addListenerOnce(map, 'idle', () => { if (pts.length === 1) map.setZoom(15); });
-
-        // "Draw search area" — the drawn polygon narrows the table/export/count
-        // (handled by the parent via onAreaChange); the map keeps showing every
-        // pin for context, so this never needs to rebuild the map itself.
-        const drawingManager = new DrawingManager({
-          drawingMode: null,
-          drawingControl: false,
-          polygonOptions: { fillColor: '#296190', fillOpacity: 0.12, strokeColor: '#296190', strokeWeight: 2, clickable: false, editable: true, zIndex: 5 },
-        });
-        drawingManager.setMap(map);
-        drawingManagerRef.current = drawingManager;
-        g.event.addListener(drawingManager, 'polygoncomplete', (polygon) => {
-          if (committedPolygonRef.current) { committedPolygonRef.current.setMap(null); }
-          committedPolygonRef.current = polygon;
-          drawingManager.setDrawingMode(null);
-          setDrawingActive(false);
-          const emitArea = () => {
-            const ring = polygon.getPath().getArray().map((ll) => [ll.lng(), ll.lat()]);
-            onAreaChangeRef.current?.(ring);
-          };
-          emitArea();
-          g.event.addListener(polygon.getPath(), 'set_at', emitArea);
-          g.event.addListener(polygon.getPath(), 'insert_at', emitArea);
-          g.event.addListener(polygon.getPath(), 'remove_at', emitArea);
-        });
-
         if (!cancelled) setStatus('ok');
+
+        // "Draw search area" is isolated in its own try/catch — if the drawing
+        // library fails to load for any reason, the map above still works;
+        // only the draw button itself silently stays unavailable.
+        try {
+          const { DrawingManager } = await window.google.maps.importLibrary('drawing');
+          if (cancelled) return;
+          const drawingManager = new DrawingManager({
+            drawingMode: null,
+            drawingControl: false,
+            polygonOptions: { fillColor: '#296190', fillOpacity: 0.12, strokeColor: '#296190', strokeWeight: 2, clickable: false, editable: true, zIndex: 5 },
+          });
+          drawingManager.setMap(map);
+          drawingManagerRef.current = drawingManager;
+          g.event.addListener(drawingManager, 'polygoncomplete', (polygon) => {
+            if (committedPolygonRef.current) { committedPolygonRef.current.setMap(null); }
+            committedPolygonRef.current = polygon;
+            drawingManager.setDrawingMode(null);
+            setDrawingActive(false);
+            const emitArea = () => {
+              const ring = polygon.getPath().getArray().map((ll) => [ll.lng(), ll.lat()]);
+              onAreaChangeRef.current?.(ring);
+            };
+            emitArea();
+            g.event.addListener(polygon.getPath(), 'set_at', emitArea);
+            g.event.addListener(polygon.getPath(), 'insert_at', emitArea);
+            g.event.addListener(polygon.getPath(), 'remove_at', emitArea);
+          });
+          if (!cancelled) setDrawingAvailable(true);
+        } catch (e) {
+          console.error('drawing library load error (map itself is unaffected)', e);
+        }
       } catch (e) {
         console.error('market map load error', e);
         if (!cancelled) setStatus('noauth');
@@ -1389,7 +1395,7 @@ function MarketMap({ rows, mode, isStarred, onMarkerClick, selected, toggleSelec
 
   return (
     <div className="m-mapwrap">
-      {status === 'ok' && (
+      {status === 'ok' && drawingAvailable && (
         <div className="m-drawctrl">
           {drawingActive ? (
             <>
