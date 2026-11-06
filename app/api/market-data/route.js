@@ -150,6 +150,48 @@ export async function POST(request) {
       return NextResponse.json({ ok: true, geocoded, failed, processed: seen.size, remaining: remaining || 0 });
     }
 
+    // Same bounded-batch shape as geocode_batch, but scoped to addresses that
+    // belong to a CURRENT prospect (mls_prospects) — far cheaper than
+    // geocoding the entire history table when only prospects need a pin.
+    if (body.action === 'geocode_prospects_batch') {
+      const limit = Math.min(Number(body.limit) || 25, 50);
+      const { data: candidates, error: candErr } = await supabaseAdmin
+        .from('mls_prospects')
+        .select('address, postal_code')
+        .is('lat', null)
+        .not('address', 'is', null)
+        .order('group_key', { ascending: true })
+        .limit(2000);
+      if (candErr) {
+        console.error('market-data geocode-prospects candidates error:', candErr);
+        return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 });
+      }
+
+      const seen = new Map();
+      for (const c of candidates || []) {
+        const key = (c.address || '').trim().toLowerCase();
+        if (!seen.has(key)) seen.set(key, { address: c.address, postal_code: c.postal_code });
+        if (seen.size >= limit) break;
+      }
+
+      let geocoded = 0, failed = 0;
+      for (const { address, postal_code } of seen.values()) {
+        const geo = await geocodeAddress(address, postal_code);
+        if (geo && geo.lat != null) {
+          geocoded++;
+          await supabaseAdmin.from('mls_listings').update({ lat: geo.lat, lng: geo.lng }).eq('address', address);
+        } else {
+          failed++;
+          await supabaseAdmin.from('mls_listings').update({ lat: 0, lng: 0 }).eq('address', address);
+        }
+      }
+
+      const { count: remaining } = await supabaseAdmin
+        .from('mls_prospects').select('*', { count: 'exact', head: true }).is('lat', null).not('address', 'is', null);
+
+      return NextResponse.json({ ok: true, geocoded, failed, processed: seen.size, remaining: remaining || 0 });
+    }
+
     // Replaces the whole community_boundaries table with a freshly-uploaded
     // KML export (the admin re-exports and re-uploads the entire map each
     // time it's updated, rather than diffing individual shapes).
@@ -594,9 +636,10 @@ export async function GET(request) {
     const prospectsOnly = url.searchParams.get('prospects_only') !== '0'; // default true
     const community = (url.searchParams.get('community') || '').trim();
     const address = (url.searchParams.get('address') || '').trim();
-    const zip = (url.searchParams.get('zip') || '').trim();
     // Comma-separated — any of several statuses/types/lists at once. Empty means no filter.
     const splitCsv = (v) => (v || '').trim().split(',').map((s) => s.trim()).filter(Boolean);
+    // Zips are typed free-form, so accept commas or whitespace between them.
+    const zips = (url.searchParams.get('zip') || '').trim().split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
     const mappedCommunities = splitCsv(url.searchParams.get('mapped_community'));
     const statuses = splitCsv(url.searchParams.get('status'));
     const offFrom = url.searchParams.get('off_from') || '';
@@ -632,7 +675,7 @@ export async function GET(request) {
         let q = supabaseAdmin.from('mls_prospects').select(fields.join(','));
         if (community) q = q.or(`subdivision.ilike.%${escLike(community)}%,neighborhood.ilike.%${escLike(community)}%,mls_area.ilike.%${escLike(community)}%`);
         if (address) q = q.ilike('address', `%${escLike(address)}%`);
-        if (zip && includeNewCols) q = q.eq('postal_code', zip);
+        if (zips.length && includeNewCols) q = q.in('postal_code', zips);
         if (mappedCommunities.length && includeNewCols) q = q.in('community_name', mappedCommunities);
         if (statuses.length) q = q.in('last_status', statuses);
         if (offFrom) q = q.gte('last_off_market_date', offFrom);
@@ -665,7 +708,7 @@ export async function GET(request) {
       let q = supabaseAdmin.from('mls_listings').select('*');
       if (community) q = q.or(`subdivision.ilike.%${escLike(community)}%,neighborhood.ilike.%${escLike(community)}%,mls_area.ilike.%${escLike(community)}%`);
       if (address) q = q.ilike('address', `%${escLike(address)}%`);
-      if (zip) q = q.eq('postal_code', zip);
+      if (zips.length) q = q.in('postal_code', zips);
       if (mappedCommunities.length) q = q.in('community_name', mappedCommunities);
       if (statuses.length) q = q.in('status_normalized', statuses);
       if (offFrom) q = q.gte('off_market_date', offFrom);

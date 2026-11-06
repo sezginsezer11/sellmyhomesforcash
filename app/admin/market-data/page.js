@@ -573,6 +573,8 @@ function SearchTab({ token }) {
   const [drawnArea, setDrawnArea] = useState(null); // [[lng,lat],...] or null
   const [geocoding, setGeocoding] = useState(false);
   const [geoProgress, setGeoProgress] = useState(null); // { done, remaining }
+  const [geocodingProspects, setGeocodingProspects] = useState(false);
+  const [geoProspectsProgress, setGeoProspectsProgress] = useState(null);
   const [timelineKey, setTimelineKey] = useState('');
   const [timeline, setTimeline] = useState([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
@@ -906,6 +908,28 @@ function SearchTab({ token }) {
     if (searched) runSearch(); // refresh so newly-geocoded rows get their coordinates
   };
 
+  // Same loop, but scoped to current-prospect addresses only — far fewer
+  // Geocoding API requests than backfilling the whole history table.
+  const runGeocodeProspectsBackfill = async () => {
+    setGeocodingProspects(true);
+    let done = 0;
+    try {
+      while (true) {
+        const res = await fetch('/api/market-data', {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+          body: JSON.stringify({ action: 'geocode_prospects_batch', limit: 25 }),
+        });
+        const j = await res.json();
+        if (!j.ok) break;
+        done += j.processed;
+        setGeoProspectsProgress({ done, remaining: j.remaining });
+        if (j.remaining <= 0 || j.processed === 0) break;
+      }
+    } catch {}
+    setGeocodingProspects(false);
+    if (searched) runSearch();
+  };
+
   return (
     <div className="m-search">
       <div className="m-toggle">
@@ -922,7 +946,7 @@ function SearchTab({ token }) {
           selected={mappedCommunities}
           onChange={setMappedCommunities}
         />
-        <input placeholder="Zip…" className="m-zipinput" value={zip} onChange={(e) => setZip(e.target.value)} />
+        <input placeholder="Zip(s)…" title="One or more zip codes, separated by commas or spaces" className="m-zipinput" value={zip} onChange={(e) => setZip(e.target.value)} />
         <MultiSelect
           placeholder="All statuses"
           options={(prospectsOnly ? STATUSES : [...STATUSES, 'active', 'pending', 'sold', 'unknown']).map((s) => ({ value: s, label: s[0].toUpperCase() + s.slice(1) }))}
@@ -980,14 +1004,21 @@ function SearchTab({ token }) {
 
           {view === 'map' && (
             <div className="m-geocodebar">
-              {geocoding ? (
-                <span>Geocoding… {geoProgress ? `${geoProgress.done} done, ${geoProgress.remaining} left` : ''}</span>
-              ) : (
-                <>
-                  <span>Addresses without map coordinates won't show as pins.</span>
-                  <button className="m-geocodebtn" onClick={runGeocodeBackfill}>Geocode all addresses</button>
-                </>
-              )}
+              <span>Addresses without map coordinates won't show as pins.</span>
+              <div className="m-geocodebtns">
+                {geocodingProspects ? (
+                  <span>Geocoding prospects… {geoProspectsProgress ? `${geoProspectsProgress.done} done, ${geoProspectsProgress.remaining} left` : ''}</span>
+                ) : (
+                  <button className="m-geocodebtn" onClick={runGeocodeProspectsBackfill} disabled={geocoding} title="Only current prospects — far fewer API requests">
+                    Geocode prospects only
+                  </button>
+                )}
+                {geocoding ? (
+                  <span>Geocoding all… {geoProgress ? `${geoProgress.done} done, ${geoProgress.remaining} left` : ''}</span>
+                ) : (
+                  <button className="m-geocodebtn secondary" onClick={runGeocodeBackfill} disabled={geocodingProspects}>Geocode all addresses</button>
+                )}
+              </div>
             </div>
           )}
 
@@ -1594,7 +1625,7 @@ const css = `
   .m-searchbtn:disabled { opacity: .6; cursor: default; }
   .m-resetbtn { padding: 9px 16px; background: #fff; color: #6a7a82; border: 1px solid #d5dbdf; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13.5px; font-weight: 600; cursor: pointer; }
   .m-resetbtn:hover { border-color: #b8c0c5; color: #4a5a62; }
-  .m-zipinput { width: 80px; }
+  .m-zipinput { width: 150px; }
   .m-exportbtn { padding: 9px 16px; background: #1c5b34; color: #fff; border: 0; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13.5px; font-weight: 600; cursor: pointer; }
 
   .m-resultbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
@@ -1604,9 +1635,11 @@ const css = `
   .m-viewtoggle { display: flex; gap: 4px; background: #eef1f3; border-radius: 8px; padding: 3px; }
   .m-viewbtn { padding: 6px 14px; border: 0; background: none; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 12.5px; font-weight: 600; color: #6a7a82; cursor: pointer; }
   .m-viewbtn.on { background: #fff; color: #296190; box-shadow: 0 1px 3px rgba(20,40,60,.12); }
-  .m-geocodebar { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: #fdf3da; border: 1px solid #f0e2b8; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px; color: #6a5215; }
+  .m-geocodebar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; background: #fdf3da; border: 1px solid #f0e2b8; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px; color: #6a5215; }
+  .m-geocodebtns { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .m-geocodebtn { padding: 7px 14px; background: #296190; color: #fff; border: 0; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap; }
   .m-geocodebtn:disabled { opacity: .55; cursor: default; }
+  .m-geocodebtn.secondary { background: #fff; color: #6a5215; border: 1px solid #e3cf8f; }
   .m-kmlrow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .m-mapwrap { position: relative; border: 1px solid #e6e9ec; border-radius: 8px; overflow: hidden; background: #fff; }
   .m-drawctrl { position: absolute; top: 10px; left: 10px; z-index: 6; display: flex; align-items: center; gap: 8px; background: #fff; border-radius: 6px; box-shadow: 0 2px 8px rgba(20,40,60,.18); padding: 6px 8px; }
