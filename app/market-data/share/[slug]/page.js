@@ -180,7 +180,9 @@ function SharedMap({ rows, highlightKey, onPinClick }) {
         mapRef.current = map;
         const bounds = new g.LatLngBounds();
         const info = new InfoWindow();
-        const openers = new Map();
+        // `Map` above is google.maps.Map (destructured from importLibrary),
+        // shadowing the global — use window.Map explicitly for a plain dictionary.
+        const openers = new window.Map();
         pts.forEach((r) => {
           const pos = { lat: r._lat, lng: r._lng };
           bounds.extend(pos);
