@@ -505,13 +505,17 @@ function TypedDateInput({ value, onChange, title }) {
 
 function MultiSelect({ placeholder, options, selected, onChange }) {
   const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
   const ref = useRef(null);
+  const searchRef = useRef(null);
 
   useEffect(() => {
     if (!open) return;
+    setSearch('');
+    const t = setTimeout(() => searchRef.current?.focus(), 0);
     const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
     document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
+    return () => { document.removeEventListener('mousedown', onDoc); clearTimeout(t); };
   }, [open]);
 
   const toggle = (val) => {
@@ -525,6 +529,10 @@ function MultiSelect({ placeholder, options, selected, onChange }) {
     : selected.length === 1 ? (options.find((o) => o.value === selected[0])?.label || selected[0])
     : `${bareLabel} (${selected.length})`;
 
+  const filteredOptions = search.trim()
+    ? options.filter((o) => o.label.toLowerCase().includes(search.trim().toLowerCase()))
+    : options;
+
   return (
     <div className="m-multiselect" ref={ref}>
       <button type="button" className={'m-multiselectbtn' + (selected.length ? ' on' : '')} onClick={() => setOpen((o) => !o)}>
@@ -533,8 +541,13 @@ function MultiSelect({ placeholder, options, selected, onChange }) {
       {open && (
         <div className="m-multiselectpanel">
           {options.length === 0 && <div className="m-multiselectempty">No options.</div>}
+          {options.length > 5 && (
+            <input ref={searchRef} type="text" className="m-multiselectsearch" placeholder="Type to search…"
+              value={search} onChange={(e) => setSearch(e.target.value)} onClick={(e) => e.stopPropagation()} />
+          )}
           {selected.length > 0 && <button type="button" className="m-multiselectclear" onClick={() => onChange([])}>Clear</button>}
-          {options.map((o) => (
+          {filteredOptions.length === 0 && options.length > 0 && <div className="m-multiselectempty">No matches.</div>}
+          {filteredOptions.map((o) => (
             <label key={o.value} className="m-multiselectopt">
               <input type="checkbox" checked={selected.includes(o.value)} onChange={() => toggle(o.value)} />
               {o.label}
@@ -1608,6 +1621,7 @@ const css = `
   .m-multiselectopt:hover { background: #f5f9fc; }
   .m-multiselectopt input { cursor: pointer; }
   .m-multiselectclear { align-self: flex-end; background: none; border: 0; color: #296190; font-family: 'Jost',sans-serif; font-size: 11.5px; font-weight: 600; cursor: pointer; padding: 2px 6px; margin-bottom: 2px; }
+  .m-multiselectsearch { position: sticky; top: 0; z-index: 1; width: 100%; box-sizing: border-box; padding: 7px 8px; margin-bottom: 4px; border: 1px solid #d5dbdf; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13px; background: #fff; }
   .m-multiselectempty { padding: 8px; font-size: 12.5px; color: #9aa4ab; }
   .m-datefield { display: flex; flex-direction: column; gap: 3px; }
   .m-datelabel { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #8a9aa2; }
