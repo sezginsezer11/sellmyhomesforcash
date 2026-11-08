@@ -214,7 +214,10 @@ export async function POST(request) {
 
       // The new shapes may not match the old ones (renamed/redrawn) — clear
       // existing matches so "Match communities" re-checks everything fresh.
-      await supabaseAdmin.from('mls_listings').update({ community_name: null }).not('community_name', 'is', null);
+      // Manually-assigned communities are a deliberate admin override, not a
+      // polygon match, so a re-import must never wipe them out.
+      await supabaseAdmin.from('mls_listings').update({ community_name: null })
+        .not('community_name', 'is', null).eq('community_manual', false);
 
       return NextResponse.json({ ok: true, imported: rows.length, polygons: rows.filter((r) => r.geometry_type === 'polygon').length });
     }
@@ -249,6 +252,35 @@ export async function POST(request) {
         .from('mls_listings').select('*', { count: 'exact', head: true }).is('community_name', null).not('lat', 'is', null).neq('lat', 0);
 
       return NextResponse.json({ ok: true, matched, unmatched, processed: (candidates || []).length, remaining: remaining || 0 });
+    }
+
+    // Hand-assigns a community to every episode of a property group — for
+    // addresses that fall outside every drawn polygon (edge-of-map lots,
+    // not-yet-mapped pockets) but clearly belong to a known community.
+    // Flagged community_manual so a future KML re-import never overwrites it.
+    if (body.action === 'set_manual_community') {
+      const groupKey = (body.group_key || '').toString();
+      const communityName = (body.community_name || '').toString().trim().slice(0, 120);
+      if (!groupKey || !communityName) return NextResponse.json({ ok: false, error: 'group_key and community_name required.' }, { status: 400 });
+      const { error } = await supabaseAdmin
+        .from('mls_listings')
+        .update({ community_name: communityName, community_manual: true })
+        .eq('group_key', groupKey);
+      if (error) { console.error(error); return NextResponse.json({ ok: false, error: 'Could not save.' }, { status: 500 }); }
+      return NextResponse.json({ ok: true, community_name: communityName });
+    }
+
+    // Reverts a manual assignment back to unmatched so it's picked up by the
+    // normal polygon-matching run again (e.g. after a map update).
+    if (body.action === 'clear_manual_community') {
+      const groupKey = (body.group_key || '').toString();
+      if (!groupKey) return NextResponse.json({ ok: false, error: 'group_key required.' }, { status: 400 });
+      const { error } = await supabaseAdmin
+        .from('mls_listings')
+        .update({ community_name: null, community_manual: false })
+        .eq('group_key', groupKey);
+      if (error) { console.error(error); return NextResponse.json({ ok: false, error: 'Could not clear.' }, { status: 500 }); }
+      return NextResponse.json({ ok: true });
     }
 
     if (body.action === 'create_list') {

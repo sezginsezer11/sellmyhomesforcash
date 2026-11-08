@@ -598,6 +598,10 @@ function SearchTab({ token }) {
   const [manualSalePrice, setManualSalePrice] = useState('');
   const [manualSaleBusy, setManualSaleBusy] = useState(false);
   const [manualSaleMsg, setManualSaleMsg] = useState('');
+  const [editingCommunity, setEditingCommunity] = useState(false);
+  const [manualCommunityValue, setManualCommunityValue] = useState('');
+  const [manualCommunityBusy, setManualCommunityBusy] = useState(false);
+  const [manualCommunityMsg, setManualCommunityMsg] = useState('');
   const [addrCopied, setAddrCopied] = useState(false);
   const [selected, setSelected] = useState(() => new Set());
   const [lists, setLists] = useState([]);
@@ -772,6 +776,7 @@ function SearchTab({ token }) {
     setTimelineIndex(index != null ? index : -1);
     setShowDetails(false);
     setAddingManualSale(false); setManualSaleDate(''); setManualSalePrice(''); setManualSaleMsg('');
+    setEditingCommunity(false); setManualCommunityValue(''); setManualCommunityMsg('');
     try {
       const res = await fetch('/api/market-data?group_key=' + encodeURIComponent(groupKey), { headers: { Authorization: 'Bearer ' + token() } });
       const j = await res.json();
@@ -804,6 +809,37 @@ function SearchTab({ token }) {
       await fetch('/api/market-data', {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
         body: JSON.stringify({ action: 'remove_manual_sale', mls_number: mlsNumber }),
+      });
+      await openTimeline(timelineKey, timelineIndex);
+      runSearch();
+    } catch {}
+  };
+
+  const saveManualCommunity = async () => {
+    const name = manualCommunityValue.trim();
+    if (!name) { setManualCommunityMsg('Pick or type a community.'); return; }
+    setManualCommunityBusy(true); setManualCommunityMsg('');
+    try {
+      const res = await fetch('/api/market-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+        body: JSON.stringify({ action: 'set_manual_community', group_key: timelineKey, community_name: name }),
+      });
+      const j = await res.json();
+      if (j.ok) {
+        setEditingCommunity(false); setManualCommunityValue('');
+        await openTimeline(timelineKey, timelineIndex);
+        runSearch(); // the new community may affect the Mapped Community filter results
+      } else setManualCommunityMsg(j.error || 'Could not save.');
+    } catch { setManualCommunityMsg('Error saving.'); }
+    setManualCommunityBusy(false);
+  };
+
+  const clearManualCommunity = async () => {
+    if (!window.confirm('Clear the manually-assigned community? It goes back to unmatched.')) return;
+    try {
+      await fetch('/api/market-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+        body: JSON.stringify({ action: 'clear_manual_community', group_key: timelineKey }),
       });
       await openTimeline(timelineKey, timelineIndex);
       runSearch();
@@ -1201,6 +1237,38 @@ function SearchTab({ token }) {
                     timelineProperty.living_area && `${Number(timelineProperty.living_area).toLocaleString()} sqft`]
                     .filter(Boolean).join(' · ')}
                 </div>
+                <div className="m-communityrow">
+                  <span className="m-communitylabel">
+                    Community: <b>{timelineProperty.community_name && timelineProperty.community_name !== 'No Community' ? timelineProperty.community_name : '—'}</b>
+                  </span>
+                  {timelineProperty.community_manual && <span className="m-manualbadge" title="Set by hand, not polygon-matched">manual</span>}
+                  {!editingCommunity ? (
+                    <button className="m-inlinebtn" onClick={() => {
+                      setEditingCommunity(true);
+                      setManualCommunityValue(timelineProperty.community_name && timelineProperty.community_name !== 'No Community' ? timelineProperty.community_name : '');
+                      setManualCommunityMsg('');
+                    }}>
+                      {timelineProperty.community_name && timelineProperty.community_name !== 'No Community' ? 'Change' : 'Assign community'}
+                    </button>
+                  ) : <button className="m-inlinebtn" onClick={() => setEditingCommunity(false)}>Cancel</button>}
+                  {timelineProperty.community_manual && !editingCommunity && (
+                    <button className="m-inlinebtn" onClick={clearManualCommunity}>Clear</button>
+                  )}
+                </div>
+                {editingCommunity && (
+                  <div className="m-manualform">
+                    <div className="m-manualhint">Pick an existing community or type a new one — for addresses that fall outside every drawn map shape.</div>
+                    <div className="m-manualrow">
+                      <input type="text" list="m-community-options" placeholder="Community name"
+                        value={manualCommunityValue} onChange={(e) => setManualCommunityValue(e.target.value)} />
+                      <datalist id="m-community-options">
+                        {communityOptions.filter((c) => c && c !== 'No Community').map((c) => <option key={c} value={c} />)}
+                      </datalist>
+                      <button className="m-inlinebtn primary" onClick={saveManualCommunity} disabled={manualCommunityBusy}>{manualCommunityBusy ? 'Saving…' : 'Save'}</button>
+                    </div>
+                    {manualCommunityMsg && <div className="m-manualmsg">{manualCommunityMsg}</div>}
+                  </div>
+                )}
                 {addingManualSale && (
                   <div className="m-manualform">
                     <div className="m-manualhint">Record a sale that never showed up on the MLS — this drops the property out of Prospects-only results.</div>
@@ -1743,8 +1811,12 @@ const css = `
   .m-manualform { margin-top: 10px; padding: 10px 12px; background: #fff; border: 1px solid #bcd2e4; border-radius: 8px; }
   .m-manualhint { font-size: 12px; color: #6a7a82; margin-bottom: 8px; }
   .m-manualrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .m-manualrow input[type="number"] { padding: 7px 9px; border: 1px solid #d5dbdf; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13px; width: 150px; }
+  .m-manualrow input[type="number"], .m-manualrow input[type="text"] { padding: 7px 9px; border: 1px solid #d5dbdf; border-radius: 6px; font-family: 'Jost',sans-serif; font-size: 13px; width: 200px; }
   .m-manualmsg { font-size: 12px; color: #8a2020; margin-top: 6px; }
+  .m-communityrow { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+  .m-communitylabel { font-size: 12.5px; color: #6a7a82; }
+  .m-communitylabel b { color: #1c2b33; }
+  .m-manualbadge { font-size: 10.5px; font-weight: 600; color: #8a6a1c; background: #fdf3da; border: 1px solid #e9d59c; border-radius: 4px; padding: 1px 6px; text-transform: uppercase; letter-spacing: .02em; }
   .m-modallinks { display: flex; gap: 8px; }
   .m-mapsbtn { font-size: 12.5px; font-weight: 600; color: #296190; text-decoration: none; white-space: nowrap; border: 1px solid #bcd2e4; border-radius: 6px; padding: 5px 10px; }
   .m-mapsbtn:hover { background: #eaf2fa; }
