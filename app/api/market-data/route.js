@@ -706,22 +706,21 @@ export async function GET(request) {
       return NextResponse.json({ ok: true, communities: Array.from(seen).sort() });
     }
 
-    // Distinct matched school names actually present, one list per level —
-    // same purpose as `communities=1` above, for the school-boundary matching.
+    // Distinct school names available to filter by, one list per level. Read
+    // from school_boundaries (a couple hundred rows) rather than scanning all
+    // of mls_listings for distinct matched values — there's no manual-override
+    // path for schools (unlike communities), so the boundary names and the
+    // matched values are always the same set, and this is a single fast query
+    // instead of paginating the whole listings table three times over.
     if (url.searchParams.get('schools') === '1') {
-      const LEVEL_COLUMN = { elementary: 'elementary_school', middle: 'middle_school', high: 'high_school' };
-      const out = { elementary: [], middle: [], high: [] };
-      for (const [level, col] of Object.entries(LEVEL_COLUMN)) {
-        const { data, error } = await fetchAllPaginated(() => supabaseAdmin.from('mls_listings').select(col).not(col, 'is', null).neq(col, ''));
-        if (error) {
-          if (error.code === '42703') continue; // not migrated yet
-          return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 });
-        }
-        const seen = new Set();
-        for (const r of data || []) { const v = (r[col] || '').trim(); if (v) seen.add(v); }
-        out[level] = Array.from(seen).sort();
+      const { data, error } = await supabaseAdmin.from('school_boundaries').select('name, level');
+      if (error) {
+        if (error.code === '42P01' || error.code === 'PGRST205') return NextResponse.json({ ok: true, schools: { elementary: [], middle: [], high: [] } }); // not migrated yet
+        return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 });
       }
-      return NextResponse.json({ ok: true, schools: out });
+      const out = { elementary: new Set(), middle: new Set(), high: new Set() };
+      for (const r of data || []) { if (out[r.level]) out[r.level].add(r.name); }
+      return NextResponse.json({ ok: true, schools: { elementary: [...out.elementary].sort(), middle: [...out.middle].sort(), high: [...out.high].sort() } });
     }
 
     // Upload history, most recent first — so the admin can see which name/client
