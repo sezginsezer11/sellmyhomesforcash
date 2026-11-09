@@ -90,6 +90,51 @@ function UploadTab({ token }) {
   const fileInputRef = useRef(null);
   const nameReady = uploadName.trim().length > 0;
 
+  const [schoolDistrict, setSchoolDistrict] = useState('');
+  const [schoolKmlBusy, setSchoolKmlBusy] = useState(false);
+  const [schoolKmlMsg, setSchoolKmlMsg] = useState('');
+  const [schoolMatching, setSchoolMatching] = useState(false);
+  const [schoolMatchProgress, setSchoolMatchProgress] = useState(null); // { matched, unmatched }
+  const schoolKmlInputRef = useRef(null);
+
+  const uploadSchoolKml = async (file) => {
+    if (!schoolDistrict.trim()) { setSchoolKmlMsg('Enter a district name first.'); return; }
+    setSchoolKmlBusy(true); setSchoolKmlMsg('');
+    try {
+      const text = await file.text();
+      const res = await fetch('/api/market-data', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+        body: JSON.stringify({ action: 'import_school_kml', kml_text: text, district: schoolDistrict.trim() }),
+      });
+      const j = await res.json();
+      setSchoolKmlMsg(j.ok
+        ? `Imported ${j.imported} shapes (${(j.levels || []).join(', ')}) ✓ — run "Match schools" to apply them.`
+        : (j.error || 'Import failed.'));
+    } catch { setSchoolKmlMsg('Import error.'); }
+    setSchoolKmlBusy(false);
+  };
+
+  const runMatchSchools = async () => {
+    setSchoolMatching(true);
+    let matched = 0, unmatched = 0;
+    try {
+      for (const level of ['elementary', 'middle', 'high']) {
+        while (true) {
+          const res = await fetch('/api/market-data', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
+            body: JSON.stringify({ action: 'match_schools', level, limit: 200 }),
+          });
+          const j = await res.json();
+          if (!j.ok) break; // no boundaries uploaded yet for this level — move on
+          matched += j.matched; unmatched += j.unmatched;
+          setSchoolMatchProgress({ matched, unmatched });
+          if (j.remaining <= 0 || j.processed === 0) break;
+        }
+      }
+    } catch {}
+    setSchoolMatching(false);
+  };
+
   const uploadKml = async (file) => {
     setKmlBusy(true); setKmlMsg('');
     try {
@@ -252,6 +297,26 @@ function UploadTab({ token }) {
         {matchProgress && <span className="m-dim">{matchProgress.matched} matched, {matchProgress.unmatched} no match, {matchProgress.remaining} left</span>}
       </div>
       {kmlMsg && <p className="m-dim" style={{ marginTop: 8 }}>{kmlMsg}</p>}
+
+      <div className="m-pasthead">School boundaries</div>
+      <p className="m-dim" style={{ marginBottom: 12 }}>
+        Upload a school district's attendance-boundary KML (folders named "Elementary"/"Middle"/"High" so the level is
+        auto-detected), then match it against every geocoded property. Re-uploading a district only replaces that district's shapes.
+      </p>
+      <div className="m-kmlrow">
+        <input className="m-uploadname" style={{ maxWidth: 320 }} placeholder="District name (e.g. Del Mar Union School District)…"
+          value={schoolDistrict} onChange={(e) => setSchoolDistrict(e.target.value)} />
+        <button className="m-geocodebtn" onClick={() => schoolKmlInputRef.current?.click()} disabled={schoolKmlBusy}>
+          {schoolKmlBusy ? 'Importing…' : 'Upload school KML'}
+        </button>
+        <input ref={schoolKmlInputRef} type="file" accept=".kml" style={{ display: 'none' }}
+          onChange={(e) => { if (e.target.files?.[0]) uploadSchoolKml(e.target.files[0]); e.target.value = ''; }} />
+        <button className="m-geocodebtn" onClick={runMatchSchools} disabled={schoolMatching}>
+          {schoolMatching ? 'Matching…' : 'Match schools'}
+        </button>
+        {schoolMatchProgress && <span className="m-dim">{schoolMatchProgress.matched} matched, {schoolMatchProgress.unmatched} no match</span>}
+      </div>
+      {schoolKmlMsg && <p className="m-dim" style={{ marginTop: 8 }}>{schoolKmlMsg}</p>}
     </div>
   );
 }
@@ -1255,6 +1320,14 @@ function SearchTab({ token }) {
                     <button className="m-inlinebtn" onClick={clearManualCommunity}>Clear</button>
                   )}
                 </div>
+                {(timelineProperty.elementary_school || timelineProperty.middle_school || timelineProperty.high_school) && (
+                  <div className="m-communityrow">
+                    <span className="m-communitylabel">
+                      Schools: <b>{[timelineProperty.elementary_school, timelineProperty.middle_school, timelineProperty.high_school]
+                        .filter((s) => s && s !== '').join(' · ') || '—'}</b>
+                    </span>
+                  </div>
+                )}
                 {editingCommunity && (
                   <div className="m-manualform">
                     <div className="m-manualhint">Pick an existing community or type a new one — for addresses that fall outside every drawn map shape.</div>

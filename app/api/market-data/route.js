@@ -283,6 +283,98 @@ export async function POST(request) {
       return NextResponse.json({ ok: true });
     }
 
+    // Replaces one district's school-boundary shapes with a freshly-uploaded
+    // KML export. Level ('elementary'/'middle'/'high') is read off each
+    // placemark's folder name — one file can carry multiple levels (e.g. a
+    // high-school district's KML with separate "Middle School"/"High School"
+    // folders) and each gets bucketed correctly. Scoped to `district` so
+    // re-importing one district's map never touches another's shapes.
+    if (body.action === 'import_school_kml') {
+      const kmlText = (body.kml_text || '').toString();
+      const district = (body.district || '').toString().trim().slice(0, 160);
+      if (!kmlText.trim()) return NextResponse.json({ ok: false, error: 'Empty file.' }, { status: 400 });
+      if (!district) return NextResponse.json({ ok: false, error: 'District name required.' }, { status: 400 });
+      const parsed = parseKml(kmlText);
+      if (!parsed.length) return NextResponse.json({ ok: false, error: 'No placemarks found in this KML.' }, { status: 400 });
+
+      const LEVEL_KEYWORDS = [['elementary', 'elementary'], ['middle', 'middle'], ['high', 'high']];
+      const rows = [];
+      let skipped = 0;
+      for (const p of parsed) {
+        if (p.type !== 'polygon') { skipped++; continue; }
+        const layerLower = (p.layer || '').toLowerCase();
+        const level = (LEVEL_KEYWORDS.find(([kw]) => layerLower.includes(kw)) || [])[1];
+        if (!level) { skipped++; continue; }
+        rows.push({ name: p.name, level, district, geometry_type: p.type, ring: p.ring });
+      }
+      if (!rows.length) {
+        return NextResponse.json({ ok: false, error: 'No polygons with a recognizable level (folder name must contain "elementary", "middle", or "high").' }, { status: 400 });
+      }
+
+      const { error: delErr } = await supabaseAdmin.from('school_boundaries').delete().eq('district', district);
+      if (delErr) { console.error(delErr); return NextResponse.json({ ok: false, error: 'Could not clear old boundaries.' }, { status: 500 }); }
+
+      const { error: insErr } = await supabaseAdmin.from('school_boundaries').insert(rows);
+      if (insErr) { console.error(insErr); return NextResponse.json({ ok: false, error: 'Could not save boundaries.' }, { status: 500 }); }
+
+      // Shapes may have changed — clear existing matches for the levels this
+      // import touched so "Match schools" re-checks everything fresh.
+      const levelsTouched = [...new Set(rows.map((r) => r.level))];
+      const LEVEL_COLUMN = { elementary: 'elementary_school', middle: 'middle_school', high: 'high_school' };
+      for (const level of levelsTouched) {
+        const col = LEVEL_COLUMN[level];
+        await supabaseAdmin.from('mls_listings').update({ [col]: null }).not(col, 'is', null);
+      }
+
+      return NextResponse.json({ ok: true, imported: rows.length, skipped, levels: levelsTouched });
+    }
+
+    // Matches a bounded batch of not-yet-checked, geocoded listings against the
+    // uploaded school polygons for one level — same looped-bounded-batch shape
+    // as match_communities.
+    if (body.action === 'match_schools') {
+      const level = (body.level || '').toString();
+      const LEVEL_COLUMN = { elementary: 'elementary_school', middle: 'middle_school', high: 'high_school' };
+      const col = LEVEL_COLUMN[level];
+      if (!col) return NextResponse.json({ ok: false, error: 'level must be elementary, middle, or high.' }, { status: 400 });
+
+      const limit = Math.min(Number(body.limit) || 200, 500);
+      const { data: polygons, error: polyErr } = await supabaseAdmin.from('school_boundaries').select('name, geometry_type, ring').eq('level', level);
+      if (polyErr) { console.error(polyErr); return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 }); }
+      if (!polygons || !polygons.length) return NextResponse.json({ ok: false, error: `No ${level}-school boundaries uploaded yet.` }, { status: 400 });
+
+      const { data: candidates, error: candErr } = await supabaseAdmin
+        .from('mls_listings')
+        .select('id, lat, lng')
+        .is(col, null)
+        .not('lat', 'is', null)
+        .neq('lat', 0)
+        .order('id', { ascending: true })
+        .limit(limit);
+      if (candErr) { console.error(candErr); return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 }); }
+
+      // Point-in-polygon is computed locally (cheap); only the write is a
+      // network round trip, so those run a few at a time concurrently —
+      // same bounded-concurrency fix already applied to geocoding.
+      let matched = 0, unmatched = 0;
+      const CONCURRENCY = 10;
+      const items = candidates || [];
+      for (let i = 0; i < items.length; i += CONCURRENCY) {
+        const slice = items.slice(i, i + CONCURRENCY);
+        await Promise.all(slice.map(async (row) => {
+          const name = matchCommunity(Number(row.lat), Number(row.lng), polygons);
+          if (name) matched++; else unmatched++;
+          // '' (not null) marks "checked, no polygon contains this point" so it isn't retried forever.
+          await supabaseAdmin.from('mls_listings').update({ [col]: name || '' }).eq('id', row.id);
+        }));
+      }
+
+      const { count: remaining } = await supabaseAdmin
+        .from('mls_listings').select('*', { count: 'exact', head: true }).is(col, null).not('lat', 'is', null).neq('lat', 0);
+
+      return NextResponse.json({ ok: true, matched, unmatched, processed: (candidates || []).length, remaining: remaining || 0 });
+    }
+
     if (body.action === 'create_list') {
       const name = (body.name || '').toString().trim().slice(0, 120);
       if (!name) return NextResponse.json({ ok: false, error: 'List name required.' }, { status: 400 });
