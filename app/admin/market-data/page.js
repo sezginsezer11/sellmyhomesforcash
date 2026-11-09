@@ -710,6 +710,20 @@ function SearchTab({ token }) {
     })();
   }, []);
 
+  const [elementarySchools, setElementarySchools] = useState([]);
+  const [middleSchools, setMiddleSchools] = useState([]);
+  const [highSchools, setHighSchools] = useState([]);
+  const [schoolOptions, setSchoolOptions] = useState({ elementary: [], middle: [], high: [] });
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/market-data?schools=1', { headers: { Authorization: 'Bearer ' + token() } });
+        const j = await res.json();
+        if (j.ok) setSchoolOptions(j.schools || { elementary: [], middle: [], high: [] });
+      } catch {}
+    })();
+  }, []);
+
   const toggleSelect = (groupKey) => {
     setSelected((s) => {
       const next = new Set(s);
@@ -820,6 +834,7 @@ function SearchTab({ token }) {
       price_min: priceMin, price_max: priceMax, sqft_min: sqftMin, sqft_max: sqftMax,
       beds, sub_type: subTypes.join(','), filter_list_id: listFilters.join(','), tag: tagFilter,
       mapped_community: mappedCommunities.join(','),
+      elementary_school: elementarySchools.join(','), middle_school: middleSchools.join(','), high_school: highSchools.join(','),
     });
     try {
       const res = await fetch('/api/market-data?' + params.toString(), { headers: { Authorization: 'Bearer ' + token() } });
@@ -834,6 +849,7 @@ function SearchTab({ token }) {
     setOffFrom(''); setOffTo(''); setPriceMin(''); setPriceMax('');
     setSqftMin(''); setSqftMax(''); setBeds(''); setSubTypes([]);
     setListFilters([]); setTagFilter(''); setMappedCommunities([]);
+    setElementarySchools([]); setMiddleSchools([]); setHighSchools([]);
   };
 
   const openTimeline = async (groupKey, index) => {
@@ -989,8 +1005,8 @@ function SearchTab({ token }) {
 
   const exportCSV = () => {
     const cols = mode === 'prospects'
-      ? ['address', 'community_name', 'subdivision', 'neighborhood', 'mls_area', 'property_sub_type', 'beds_total', 'baths_total', 'living_area', 'last_status', 'last_list_price', 'original_list_price', 'last_off_market_date', 'days_since_off_market', 'total_listings', 'times_listed_without_selling']
-      : ['address', 'community_name', 'subdivision', 'neighborhood', 'mls_area', 'property_sub_type', 'beds_total', 'baths_total', 'living_area', 'status_normalized', 'orig_list_price', 'current_price', 'close_price', 'listing_contract_date', 'off_market_date', 'close_date', 'mls_number'];
+      ? ['address', 'community_name', 'elementary_school', 'middle_school', 'high_school', 'subdivision', 'neighborhood', 'mls_area', 'property_sub_type', 'beds_total', 'baths_total', 'living_area', 'last_status', 'last_list_price', 'original_list_price', 'last_off_market_date', 'days_since_off_market', 'total_listings', 'times_listed_without_selling']
+      : ['address', 'community_name', 'elementary_school', 'middle_school', 'high_school', 'subdivision', 'neighborhood', 'mls_area', 'property_sub_type', 'beds_total', 'baths_total', 'living_area', 'status_normalized', 'orig_list_price', 'current_price', 'close_price', 'listing_contract_date', 'off_market_date', 'close_date', 'mls_number'];
     const esc = (v) => '"' + (v == null ? '' : String(v).replace(/"/g, '""')) + '"';
     const csv = [cols.join(',')].concat(areaRows.map((r) => cols.map((c) => esc(r[c])).join(','))).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -1059,6 +1075,24 @@ function SearchTab({ token }) {
           options={communityOptions.map((c) => ({ value: c, label: c }))}
           selected={mappedCommunities}
           onChange={setMappedCommunities}
+        />
+        <MultiSelect
+          placeholder="Any elementary school"
+          options={schoolOptions.elementary.map((s) => ({ value: s, label: s }))}
+          selected={elementarySchools}
+          onChange={setElementarySchools}
+        />
+        <MultiSelect
+          placeholder="Any middle school"
+          options={schoolOptions.middle.map((s) => ({ value: s, label: s }))}
+          selected={middleSchools}
+          onChange={setMiddleSchools}
+        />
+        <MultiSelect
+          placeholder="Any high school"
+          options={schoolOptions.high.map((s) => ({ value: s, label: s }))}
+          selected={highSchools}
+          onChange={setHighSchools}
         />
         <input placeholder="Zip(s)…" title="One or more zip codes, separated by commas or spaces" className="m-zipinput" value={zip} onChange={(e) => setZip(e.target.value)} />
         <MultiSelect

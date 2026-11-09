@@ -240,12 +240,20 @@ export async function POST(request) {
         .limit(limit);
       if (candErr) { console.error(candErr); return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 }); }
 
+      // Point-in-polygon is computed locally (cheap); only the write is a
+      // network round trip, so those run a few at a time concurrently —
+      // same bounded-concurrency fix already applied to geocoding/schools.
       let matched = 0, unmatched = 0;
-      for (const row of candidates || []) {
-        const name = matchCommunity(Number(row.lat), Number(row.lng), polygons);
-        if (name) matched++; else unmatched++;
-        // '' (not null) marks "checked, no polygon contains this point" so it isn't retried forever.
-        await supabaseAdmin.from('mls_listings').update({ community_name: name || '' }).eq('id', row.id);
+      const CONCURRENCY = 10;
+      const communityItems = candidates || [];
+      for (let i = 0; i < communityItems.length; i += CONCURRENCY) {
+        const slice = communityItems.slice(i, i + CONCURRENCY);
+        await Promise.all(slice.map(async (row) => {
+          const name = matchCommunity(Number(row.lat), Number(row.lng), polygons);
+          if (name) matched++; else unmatched++;
+          // '' (not null) marks "checked, no polygon contains this point" so it isn't retried forever.
+          await supabaseAdmin.from('mls_listings').update({ community_name: name || '' }).eq('id', row.id);
+        }));
       }
 
       const { count: remaining } = await supabaseAdmin
@@ -609,6 +617,7 @@ const SEARCH_FIELDS_PROSPECTS = [
   'lot_size_sqft', 'year_built', 'last_status', 'last_list_price', 'last_current_price',
   'original_list_price', 'last_off_market_date', 'days_since_off_market',
   'total_listings', 'times_listed_without_selling', 'lat', 'lng',
+  'elementary_school', 'middle_school', 'high_school',
 ];
 
 // GET — admin search (prospects or all history), a single APN/address-group's
@@ -697,6 +706,24 @@ export async function GET(request) {
       return NextResponse.json({ ok: true, communities: Array.from(seen).sort() });
     }
 
+    // Distinct matched school names actually present, one list per level —
+    // same purpose as `communities=1` above, for the school-boundary matching.
+    if (url.searchParams.get('schools') === '1') {
+      const LEVEL_COLUMN = { elementary: 'elementary_school', middle: 'middle_school', high: 'high_school' };
+      const out = { elementary: [], middle: [], high: [] };
+      for (const [level, col] of Object.entries(LEVEL_COLUMN)) {
+        const { data, error } = await fetchAllPaginated(() => supabaseAdmin.from('mls_listings').select(col).not(col, 'is', null).neq(col, ''));
+        if (error) {
+          if (error.code === '42703') continue; // not migrated yet
+          return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 });
+        }
+        const seen = new Set();
+        for (const r of data || []) { const v = (r[col] || '').trim(); if (v) seen.add(v); }
+        out[level] = Array.from(seen).sort();
+      }
+      return NextResponse.json({ ok: true, schools: out });
+    }
+
     // Upload history, most recent first — so the admin can see which name/client
     // a past CSV drop was for.
     if (url.searchParams.get('uploads') === '1') {
@@ -769,6 +796,9 @@ export async function GET(request) {
     // Zips are typed free-form, so accept commas or whitespace between them.
     const zips = (url.searchParams.get('zip') || '').trim().split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
     const mappedCommunities = splitCsv(url.searchParams.get('mapped_community'));
+    const elementarySchools = splitCsv(url.searchParams.get('elementary_school'));
+    const middleSchools = splitCsv(url.searchParams.get('middle_school'));
+    const highSchools = splitCsv(url.searchParams.get('high_school'));
     const statuses = splitCsv(url.searchParams.get('status'));
     const offFrom = url.searchParams.get('off_from') || '';
     const offTo = url.searchParams.get('off_to') || '';
@@ -805,6 +835,9 @@ export async function GET(request) {
         if (address) q = q.ilike('address', `%${escLike(address)}%`);
         if (zips.length && includeNewCols) q = q.in('postal_code', zips);
         if (mappedCommunities.length && includeNewCols) q = q.in('community_name', mappedCommunities);
+        if (elementarySchools.length && includeNewCols) q = q.in('elementary_school', elementarySchools);
+        if (middleSchools.length && includeNewCols) q = q.in('middle_school', middleSchools);
+        if (highSchools.length && includeNewCols) q = q.in('high_school', highSchools);
         if (statuses.length) q = q.in('last_status', statuses);
         if (offFrom) q = q.gte('last_off_market_date', offFrom);
         if (offTo) q = q.lte('last_off_market_date', offTo);
@@ -824,7 +857,9 @@ export async function GET(request) {
         // Older databases may not have postal_code/community_name/lat/lng on the
         // view yet — degrade gracefully (drop those fields and filters) rather
         // than show nothing.
-        ({ data, error } = await fetchAllPaginated(buildProspectsQuery(SEARCH_FIELDS_PROSPECTS.filter((f) => f !== 'lat' && f !== 'lng' && f !== 'postal_code' && f !== 'community_name'), false)));
+        const legacyFields = SEARCH_FIELDS_PROSPECTS.filter((f) =>
+          !['lat', 'lng', 'postal_code', 'community_name', 'elementary_school', 'middle_school', 'high_school'].includes(f));
+        ({ data, error } = await fetchAllPaginated(buildProspectsQuery(legacyFields, false)));
       }
       if (error) { console.error(error); return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 }); }
       const withLists = await attachListMemberships(data || []);
@@ -838,6 +873,9 @@ export async function GET(request) {
       if (address) q = q.ilike('address', `%${escLike(address)}%`);
       if (zips.length) q = q.in('postal_code', zips);
       if (mappedCommunities.length) q = q.in('community_name', mappedCommunities);
+      if (elementarySchools.length) q = q.in('elementary_school', elementarySchools);
+      if (middleSchools.length) q = q.in('middle_school', middleSchools);
+      if (highSchools.length) q = q.in('high_school', highSchools);
       if (statuses.length) q = q.in('status_normalized', statuses);
       if (offFrom) q = q.gte('off_market_date', offFrom);
       if (offTo) q = q.lte('off_market_date', offTo);
