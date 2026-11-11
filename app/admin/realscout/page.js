@@ -10,6 +10,9 @@ const fmtDate = (v) => (v ? new Date(v).toLocaleDateString() : '—');
 const SHOWN_TAGS = 2;
 const tagLabel = (t) => t.replace(/^RealScout /, '');
 
+// "San Diego, CA 92130" — from whichever of the three the contact has.
+const cityLine = (c) => [[c.city, c.state].filter(Boolean).join(', '), c.zipcode].filter(Boolean).join(' ');
+
 export default function RealScoutPage() {
   const [session, setSession] = useState(null);
   const [checking, setChecking] = useState(true);
@@ -160,7 +163,7 @@ function Contacts({ token }) {
         <table className="r-table">
           <thead>
             <tr>
-              <th className="r-name">Name</th><th>Email</th><th>Phone</th><th>Tags</th>
+              <th className="r-name">Name</th><th>Address</th><th>Email</th><th>Phone</th><th>Tags</th>
               <th className="r-r">Scout Score</th><th>Last active</th><th>Created</th><th></th>
             </tr>
           </thead>
@@ -168,6 +171,14 @@ function Contacts({ token }) {
             {contacts.map((c) => (
               <tr key={c.id}>
                 <td className="r-name">{[c.first_name, c.last_name].filter(Boolean).join(' ') || '—'}</td>
+                <td className="r-addr">
+                  {c.street || cityLine(c) ? (
+                    <>
+                      {c.street && <div>{c.street}</div>}
+                      {cityLine(c) && <div className="r-addr2">{cityLine(c)}</div>}
+                    </>
+                  ) : '—'}
+                </td>
                 <td>{c.email || '—'}</td>
                 <td>{c.primary_mobile_phone || '—'}</td>
                 <td className="r-tags" title={(c.tags || []).join(', ')}>
@@ -230,7 +241,11 @@ const css = `
   .r-table .r-r { text-align: right; }
   /* Tags are long, auto-generated and many — cap and wrap them so they can't
      push name/email/phone off the side of the table. */
-  .r-table td.r-tags { white-space: normal; max-width: 240px; color: #46535a; }
+  /* min-width, not max: the table layout squeezes these two wrapping columns
+     to almost nothing otherwise, breaking a street address over four lines. */
+  .r-table td.r-tags { white-space: normal; min-width: 190px; max-width: 260px; color: #46535a; }
+  .r-table td.r-addr { white-space: normal; min-width: 190px; }
+  .r-addr2 { color: #6a7a82; font-size: 12px; }
   .r-more { color: #8b979d; }
   /* Keep the person visible while scrolling the rest sideways. */
   .r-table .r-name { position: sticky; left: 0; z-index: 1; background: #fff; }
