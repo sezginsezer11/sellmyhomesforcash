@@ -172,6 +172,7 @@ export default function AdminPage() {
         <div className="a-head-right">
           <a className="a-tool" href="/admin/comps">Comps</a>
           <a className="a-tool" href="/admin/market-data">Off Market</a>
+          <a className="a-tool" href="/admin/realscout">RealScout</a>
           <a className="a-tool" href="/fix-and-flip-calculator" target="_blank" rel="noopener">Fix &amp; Flip Calculator ↗</a>
           <span className="a-me">{session.user.email}</span>
           <button className="a-logout" onClick={logout}>Sign out</button>
