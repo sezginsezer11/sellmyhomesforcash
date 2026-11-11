@@ -350,6 +350,9 @@ function LeadsMap({ contacts }) {
   const ref = useRef(null);
   const [status, setStatus] = useState('loading'); // loading | ok | noauth
   const builtRef = useRef(false);
+  const mapRef = useRef(null);
+  const infoRef = useRef(null);
+  const markersRef = useRef([]);
 
   // Contacts in the same building geocode to one point and stack invisibly —
   // fan any such group into a small ring so every lead gets its own pin.
@@ -407,45 +410,61 @@ function LeadsMap({ contacts }) {
         if (cancelled || !ref.current || builtRef.current) return;
         builtRef.current = true;
         const g = window.google.maps;
-        const map = new g.Map(ref.current, {
+        mapRef.current = new g.Map(ref.current, {
           mapTypeId: 'roadmap', mapTypeControl: true, streetViewControl: false, fullscreenControl: true,
           center: DEFAULT_CENTER, zoom: 11,
         });
-        const bounds = new g.LatLngBounds();
-        const info = new g.InfoWindow();
-        pts.forEach((c) => {
-          const pos = { lat: c._lat, lng: c._lng };
-          bounds.extend(pos);
-          const { color, scale } = scoreStyle(c.scout_score);
-          const marker = new g.Marker({
-            position: pos, map,
-            title: [c.first_name, c.last_name].filter(Boolean).join(' '),
-            icon: { path: g.SymbolPath.CIRCLE, scale, fillColor: color, fillOpacity: 0.9, strokeColor: '#fff', strokeWeight: 2 },
-          });
-          marker.addListener('mouseover', () => {
-            const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || c.email || 'Contact';
-            info.setContent(
-              '<div style="font-family:sans-serif;max-width:230px;color:#1c2b33">' +
-              '<div style="font-weight:700;font-size:14px">' + name + '</div>' +
-              (c.street ? '<div style="font-size:12px;margin-top:2px">' + c.street + '</div>' : '') +
-              (cityLine(c) ? '<div style="font-size:12px;color:#6a7a82">' + cityLine(c) + '</div>' : '') +
-              '<div style="font-size:12px;margin-top:4px">Scout Score: <b>' + (c.scout_score ?? '—') + '</b></div>' +
-              (c.contact_type ? '<div style="font-size:11.5px;color:#296190;margin-top:3px">' + (TYPE_LABEL[c.contact_type] || c.contact_type) + '</div>' : '') +
-              '</div>'
-            );
-            info.open(map, marker);
-          });
-          if (c.realscout_url) marker.addListener('click', () => window.open(c.realscout_url, '_blank', 'noopener'));
-        });
-        if (pts.length) map.fitBounds(bounds, 48);
+        infoRef.current = new g.InfoWindow();
         if (!cancelled) setStatus('ok');
       } catch {
         if (!cancelled) setStatus('noauth');
       }
     })();
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pts]);
+  }, []);
+
+  // Markers live in their own pass so changing a filter actually redraws them.
+  // Building them inside the map-creation effect meant the first set stuck
+  // around forever: the filter updated the counts while the pins underneath
+  // still showed everyone.
+  useEffect(() => {
+    if (status !== 'ok' || !mapRef.current) return;
+    const g = window.google.maps;
+    const map = mapRef.current;
+    const info = infoRef.current;
+
+    info?.close();
+    for (const m of markersRef.current) m.setMap(null);
+    markersRef.current = [];
+
+    const bounds = new g.LatLngBounds();
+    for (const c of pts) {
+      const pos = { lat: c._lat, lng: c._lng };
+      bounds.extend(pos);
+      const { color, scale } = scoreStyle(c.scout_score);
+      const marker = new g.Marker({
+        position: pos, map,
+        title: [c.first_name, c.last_name].filter(Boolean).join(' '),
+        icon: { path: g.SymbolPath.CIRCLE, scale, fillColor: color, fillOpacity: 0.9, strokeColor: '#fff', strokeWeight: 2 },
+      });
+      marker.addListener('mouseover', () => {
+        const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || c.email || 'Contact';
+        info.setContent(
+          '<div style="font-family:sans-serif;max-width:230px;color:#1c2b33">' +
+          '<div style="font-weight:700;font-size:14px">' + name + '</div>' +
+          (c.street ? '<div style="font-size:12px;margin-top:2px">' + c.street + '</div>' : '') +
+          (cityLine(c) ? '<div style="font-size:12px;color:#6a7a82">' + cityLine(c) + '</div>' : '') +
+          '<div style="font-size:12px;margin-top:4px">Scout Score: <b>' + (c.scout_score ?? '—') + '</b></div>' +
+          (c.contact_type ? '<div style="font-size:11.5px;color:#296190;margin-top:3px">' + (TYPE_LABEL[c.contact_type] || c.contact_type) + '</div>' : '') +
+          '</div>'
+        );
+        info.open(map, marker);
+      });
+      if (c.realscout_url) marker.addListener('click', () => window.open(c.realscout_url, '_blank', 'noopener'));
+      markersRef.current.push(marker);
+    }
+    if (pts.length) map.fitBounds(bounds, 48);
+  }, [pts, status]);
 
   return (
     <div>
