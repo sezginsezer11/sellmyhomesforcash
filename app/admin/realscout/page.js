@@ -5,6 +5,11 @@ import { supabaseBrowser } from '../../../lib/supabase-browser';
 
 const fmtDate = (v) => (v ? new Date(v).toLocaleDateString() : '—');
 
+// RealScout prefixes its own auto-generated behaviour tags with "RealScout ",
+// which is just noise once they're all in one column.
+const SHOWN_TAGS = 2;
+const tagLabel = (t) => t.replace(/^RealScout /, '');
+
 export default function RealScoutPage() {
   const [session, setSession] = useState(null);
   const [checking, setChecking] = useState(true);
@@ -155,17 +160,24 @@ function Contacts({ token }) {
         <table className="r-table">
           <thead>
             <tr>
-              <th>Name</th><th>Email</th><th>Phone</th><th>Tags</th>
+              <th className="r-name">Name</th><th>Email</th><th>Phone</th><th>Tags</th>
               <th className="r-r">Scout Score</th><th>Last active</th><th>Created</th><th></th>
             </tr>
           </thead>
           <tbody>
             {contacts.map((c) => (
               <tr key={c.id}>
-                <td>{[c.first_name, c.last_name].filter(Boolean).join(' ') || '—'}</td>
+                <td className="r-name">{[c.first_name, c.last_name].filter(Boolean).join(' ') || '—'}</td>
                 <td>{c.email || '—'}</td>
                 <td>{c.primary_mobile_phone || '—'}</td>
-                <td>{(c.tags || []).join(', ') || '—'}</td>
+                <td className="r-tags" title={(c.tags || []).join(', ')}>
+                  {(c.tags || []).length === 0 ? '—' : (
+                    <>
+                      {(c.tags || []).slice(0, SHOWN_TAGS).map(tagLabel).join(', ')}
+                      {(c.tags || []).length > SHOWN_TAGS && <span className="r-more"> +{c.tags.length - SHOWN_TAGS}</span>}
+                    </>
+                  )}
+                </td>
                 <td className="r-r">{c.scout_score ?? '—'}</td>
                 <td>{fmtDate(c.last_active_at)}</td>
                 <td>{fmtDate(c.created_at)}</td>
@@ -216,6 +228,13 @@ const css = `
   .r-table th, .r-table td { padding: 9px 12px; border-bottom: 1px solid #eef1f2; text-align: left; white-space: nowrap; }
   .r-table th { background: #f7f9fa; font-weight: 600; color: #46535a; }
   .r-table .r-r { text-align: right; }
+  /* Tags are long, auto-generated and many — cap and wrap them so they can't
+     push name/email/phone off the side of the table. */
+  .r-table td.r-tags { white-space: normal; max-width: 240px; color: #46535a; }
+  .r-more { color: #8b979d; }
+  /* Keep the person visible while scrolling the rest sideways. */
+  .r-table .r-name { position: sticky; left: 0; z-index: 1; background: #fff; }
+  .r-table th.r-name { background: #f7f9fa; z-index: 2; }
 
   .r-loadmore { margin-top: 14px; padding: 8px 18px; border: 1px solid #d3dade; border-radius: 8px; background: #fff; cursor: pointer; font-size: 14px; }
   .r-loadmore:disabled { opacity: .6; cursor: default; }
