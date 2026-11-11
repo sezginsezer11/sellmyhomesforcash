@@ -8,13 +8,20 @@ const MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY;
 const DEFAULT_CENTER = { lat: 32.9435, lng: -117.2297 };
 
 // Scout Score is RealScout's engagement measure, so it's what "most active"
-// means here: hotter colour and bigger pin as the score climbs.
+// means here. The bands follow how the scores actually fall rather than even
+// tenths: the median contact scores 0 and the 99th percentile is 65, so even
+// cutoffs would paint almost every pin the same colour. Dormant contacts stay
+// small and pale so the genuinely active ones read at a glance.
+const SCORE_BANDS = [
+  { min: 60, label: '60+', color: '#c0392b', scale: 13 },
+  { min: 40, label: '40–59', color: '#e67e22', scale: 11 },
+  { min: 20, label: '20–39', color: '#2a7ab0', scale: 9 },
+  { min: 1, label: '1–19', color: '#7f8c8d', scale: 6 },
+  { min: 0, label: 'no activity', color: '#c5ced3', scale: 4.5 },
+];
 function scoreStyle(score) {
-  if (score == null) return { color: '#9aa7ad', scale: 6 };
-  if (score >= 80) return { color: '#c0392b', scale: 12 };
-  if (score >= 60) return { color: '#e67e22', scale: 10 };
-  if (score >= 40) return { color: '#2a7ab0', scale: 8 };
-  return { color: '#7f8c8d', scale: 7 };
+  if (score == null) return SCORE_BANDS[SCORE_BANDS.length - 1];
+  return SCORE_BANDS.find((b) => score >= b.min) || SCORE_BANDS[SCORE_BANDS.length - 1];
 }
 
 const fmtDate = (v) => (v ? new Date(v).toLocaleDateString() : '—');
@@ -80,6 +87,7 @@ function Contacts({ token }) {
   const [address, setAddress] = useState('');
   const [zip, setZip] = useState('');
   const [contactType, setContactType] = useState('');
+  const [minScore, setMinScore] = useState('');
   const [sort, setSort] = useState('last_active_at');
 
   const [syncing, setSyncing] = useState(false);
@@ -131,6 +139,7 @@ function Contacts({ token }) {
       if (address.trim()) params.set('address', address.trim());
       if (zip.trim()) params.set('zip', zip.trim());
       if (contactType) params.set('contact_type', contactType);
+      if (minScore) params.set('min_score', minScore);
       const res = await fetch('/api/realscout?' + params.toString(), { headers: { Authorization: 'Bearer ' + token() } });
       const j = await res.json();
       if (!j.ok) { setError(j); setContacts([]); setLoading(false); return; }
@@ -236,6 +245,13 @@ function Contacts({ token }) {
         <input placeholder="Name or email…" value={name} onChange={(e) => setName(e.target.value)} />
         <input placeholder="Street or city…" value={address} onChange={(e) => setAddress(e.target.value)} />
         <input placeholder="Zip(s)…" title="One or more ZIPs, separated by commas or spaces" value={zip} onChange={(e) => setZip(e.target.value)} />
+        <select value={minScore} onChange={(e) => setMinScore(e.target.value)}>
+          <option value="">Any score</option>
+          <option value="1">Score 1+ (any activity)</option>
+          <option value="20">Score 20+</option>
+          <option value="40">Score 40+</option>
+          <option value="60">Score 60+ (most active)</option>
+        </select>
         <select value={contactType} onChange={(e) => setContactType(e.target.value)}>
           <option value="">Any type</option>
           <option value="SELLER">Seller</option>
@@ -325,7 +341,7 @@ function Contacts({ token }) {
         </table>
       </div>
       )}
-      {contacts.length === 500 && <p className="r-dim">Showing the first 500 matches — narrow the filters to see the rest.</p>}
+      {contacts.length >= 5000 && <p className="r-dim">Showing the first 5,000 matches — narrow the filters to see the rest.</p>}
     </div>
   );
 }
@@ -436,11 +452,10 @@ function LeadsMap({ contacts }) {
       {status === 'noauth' && <p className="r-err">Map couldn't load — check NEXT_PUBLIC_GOOGLE_MAPS_KEY.</p>}
       <div ref={ref} className="r-map" />
       <div className="r-legend">
-        <span><i style={{ background: '#c0392b' }} /> 80+</span>
-        <span><i style={{ background: '#e67e22' }} /> 60–79</span>
-        <span><i style={{ background: '#2a7ab0' }} /> 40–59</span>
-        <span><i style={{ background: '#7f8c8d' }} /> under 40</span>
-        <span><i style={{ background: '#9aa7ad' }} /> no score</span>
+        <span className="r-legendlabel">Scout Score</span>
+        {SCORE_BANDS.map((b) => (
+          <span key={b.label}><i style={{ background: b.color }} /> {b.label}</span>
+        ))}
       </div>
     </div>
   );
@@ -491,7 +506,8 @@ const css = `
   .r-togglebtn { padding: 7px 16px; border: none; background: #fff; cursor: pointer; font-size: 14px; color: #46535a; }
   .r-togglebtn.on { background: #296190; color: #fff; }
   .r-map { height: 560px; width: 100%; border: 1px solid #e3e8ea; border-radius: 10px; }
-  .r-legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; font-size: 12px; color: #6a7a82; }
+  .r-legend { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin-top: 10px; font-size: 12px; color: #6a7a82; }
+  .r-legendlabel { font-weight: 600; color: #46535a; }
   .r-legend span { display: inline-flex; align-items: center; gap: 6px; }
   .r-legend i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 

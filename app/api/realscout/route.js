@@ -22,6 +22,22 @@ async function requireAdmin(request) {
   return data.user;
 }
 
+// PostgREST caps a single request at 1000 rows, so the map (which wants every
+// matching contact, not a first page) has to walk them.
+async function fetchAllPaginated(buildQuery, cap = 5000) {
+  const pageSize = 1000;
+  let all = [];
+  let from = 0;
+  while (all.length < cap) {
+    const { data, error } = await buildQuery().range(from, from + pageSize - 1);
+    if (error) return { data: null, error };
+    all = all.concat(data || []);
+    if (!data || data.length < pageSize) break;
+    from += pageSize;
+  }
+  return { data: all, error: null };
+}
+
 async function realscoutFetch(path, searchParams) {
   const token = process.env.REALSCOUT_API_TOKEN;
   if (!token) return { ok: false, status: 0, error: 'not_configured' };
@@ -183,16 +199,23 @@ export async function GET(request) {
       const address = (url.searchParams.get('address') || '').trim();
       const zips = (url.searchParams.get('zip') || '').trim().split(/[,\s]+/).filter(Boolean);
       const contactType = (url.searchParams.get('contact_type') || '').trim();
+      const minScore = url.searchParams.get('min_score');
       const sort = url.searchParams.get('sort') || 'last_active_at';
       const escLike = (s) => s.replace(/[,()]/g, '');
 
-      let q = supabaseAdmin.from('realscout_contacts').select('*');
-      if (name) q = q.or(`first_name.ilike.%${escLike(name)}%,last_name.ilike.%${escLike(name)}%,email.ilike.%${escLike(name)}%`);
-      if (address) q = q.or(`street.ilike.%${escLike(address)}%,city.ilike.%${escLike(address)}%`);
-      if (zips.length) q = q.in('zipcode', zips);
-      if (contactType) q = q.eq('contact_type', contactType);
+      const buildQuery = () => {
+        let q = supabaseAdmin.from('realscout_contacts').select('*');
+        if (name) q = q.or(`first_name.ilike.%${escLike(name)}%,last_name.ilike.%${escLike(name)}%,email.ilike.%${escLike(name)}%`);
+        if (address) q = q.or(`street.ilike.%${escLike(address)}%,city.ilike.%${escLike(address)}%`);
+        if (zips.length) q = q.in('zipcode', zips);
+        if (contactType) q = q.eq('contact_type', contactType);
+        if (minScore) q = q.gte('scout_score', Number(minScore));
+        // id as a tiebreak keeps paging stable — without it rows with equal
+        // sort values can repeat or vanish across page boundaries.
+        return q.order(sort, { ascending: false, nullsFirst: false }).order('id', { ascending: true });
+      };
 
-      const { data, error } = await q.order(sort, { ascending: false, nullsFirst: false }).limit(500);
+      const { data, error } = await fetchAllPaginated(buildQuery);
       if (error) {
         if (error.code === '42P01' || error.code === 'PGRST205') return NextResponse.json({ ok: false, error: 'table_missing' });
         console.error(error);
