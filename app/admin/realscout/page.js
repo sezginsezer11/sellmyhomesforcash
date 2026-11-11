@@ -89,6 +89,9 @@ function Contacts({ token }) {
   const [contactType, setContactType] = useState('');
   const [minScore, setMinScore] = useState('');
   const [sort, setSort] = useState('last_active_at');
+  const [tags, setTags] = useState([]);
+  const [tagMode, setTagMode] = useState('any');
+  const [tagOptions, setTagOptions] = useState([]);
 
   const [syncing, setSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState(null);
@@ -131,6 +134,16 @@ function Contacts({ token }) {
   };
   useEffect(() => { loadAccount(); }, []);
 
+  // The tag list comes from the synced contacts, so it's reloaded after a sync
+  // as well — a new sync can introduce tags that didn't exist before.
+  const loadTagOptions = async () => {
+    try {
+      const res = await fetch('/api/realscout?action=tags', { headers: { Authorization: 'Bearer ' + token() } });
+      const j = await res.json();
+      if (j.ok) setTagOptions(j.tags);
+    } catch { /* the filter just stays empty */ }
+  };
+
   const loadContacts = async () => {
     setLoading(true); setError(null);
     try {
@@ -140,6 +153,8 @@ function Contacts({ token }) {
       if (zip.trim()) params.set('zip', zip.trim());
       if (contactType) params.set('contact_type', contactType);
       if (minScore) params.set('min_score', minScore);
+      for (const t of tags) params.append('tag', t);
+      if (tags.length > 1) params.set('tag_mode', tagMode);
       const res = await fetch('/api/realscout?' + params.toString(), { headers: { Authorization: 'Bearer ' + token() } });
       const j = await res.json();
       if (!j.ok) { setError(j); setContacts([]); setLoading(false); return; }
@@ -152,6 +167,11 @@ function Contacts({ token }) {
     if (account?.ok) loadContacts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account?.ok, sort]);
+
+  useEffect(() => {
+    if (account?.ok) loadTagOptions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account?.ok]);
 
   // Pages through RealScout one request at a time — a full sync is dozens of
   // calls, far more than one serverless invocation can hold open.
@@ -173,7 +193,7 @@ function Contacts({ token }) {
       }
     } catch { setError({ error: 'network_error' }); }
     setSyncing(false);
-    await loadContacts();
+    await Promise.all([loadContacts(), loadTagOptions()]);
   };
 
   const runSearch = (e) => { if (e) e.preventDefault(); loadContacts(); };
@@ -259,6 +279,18 @@ function Contacts({ token }) {
           <option value="BUYER_SELLER">Buyer &amp; Seller</option>
           <option value="OTHER">Other</option>
         </select>
+        <MultiSelect
+          placeholder="Any tag"
+          options={tagOptions.map((t) => ({ value: t.tag, label: `${tagLabel(t.tag)} (${t.count})` }))}
+          selected={tags}
+          onChange={setTags}
+        />
+        {tags.length > 1 && (
+          <select value={tagMode} onChange={(e) => setTagMode(e.target.value)} title="How to combine the selected tags">
+            <option value="any">Any of these tags</option>
+            <option value="all">All of these tags</option>
+          </select>
+        )}
         <select value={sort} onChange={(e) => setSort(e.target.value)}>
           <option value="last_active_at">Sort: Last active</option>
           <option value="rs_created_at">Sort: Created</option>
@@ -342,6 +374,62 @@ function Contacts({ token }) {
       </div>
       )}
       {contacts.length >= 5000 && <p className="r-dim">Showing the first 5,000 matches — narrow the filters to see the rest.</p>}
+    </div>
+  );
+}
+
+// Checkbox dropdown for picking several tags at once. There are hundreds of
+// RealScout tags, so the panel gets a type-to-search box.
+function MultiSelect({ placeholder, options, selected, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const ref = useRef(null);
+  const searchRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setSearch('');
+    const t = setTimeout(() => searchRef.current?.focus(), 0);
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    return () => { document.removeEventListener('mousedown', onDoc); clearTimeout(t); };
+  }, [open]);
+
+  const toggle = (val) => {
+    const next = new Set(selected);
+    if (next.has(val)) next.delete(val); else next.add(val);
+    onChange(Array.from(next));
+  };
+
+  const label = selected.length === 0 ? placeholder
+    : selected.length === 1 ? (options.find((o) => o.value === selected[0])?.label || selected[0])
+    : `${selected.length} tags`;
+
+  const q = search.trim().toLowerCase();
+  const filteredOptions = q ? options.filter((o) => o.label.toLowerCase().includes(q)) : options;
+
+  return (
+    <div className="r-multiselect" ref={ref}>
+      <button type="button" className={'r-multiselectbtn' + (selected.length ? ' on' : '')} onClick={() => setOpen((o) => !o)}>
+        {label}<span className="r-multiselectcaret">▾</span>
+      </button>
+      {open && (
+        <div className="r-multiselectpanel">
+          {options.length === 0 && <div className="r-multiselectempty">No tags yet — sync first.</div>}
+          {options.length > 5 && (
+            <input ref={searchRef} type="text" className="r-multiselectsearch" placeholder="Type to search…"
+              value={search} onChange={(e) => setSearch(e.target.value)} onClick={(e) => e.stopPropagation()} />
+          )}
+          {selected.length > 0 && <button type="button" className="r-multiselectclear" onClick={() => onChange([])}>Clear</button>}
+          {filteredOptions.length === 0 && options.length > 0 && <div className="r-multiselectempty">No matches.</div>}
+          {filteredOptions.map((o) => (
+            <label key={o.value} className="r-multiselectopt">
+              <input type="checkbox" checked={selected.includes(o.value)} onChange={() => toggle(o.value)} />
+              {o.label}
+            </label>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -500,6 +588,17 @@ const css = `
   .r-connected { font-size: 14px; margin-bottom: 14px; color: #2d4f36; }
   .r-filters { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
   .r-filters input, .r-filters select { padding: 8px 10px; border: 1px solid #d3dade; border-radius: 8px; font-size: 14px; }
+  .r-multiselect { position: relative; }
+  .r-multiselectbtn { display: flex; align-items: center; gap: 6px; max-width: 240px; padding: 8px 10px; border: 1px solid #d3dade; border-radius: 8px; font-family: inherit; font-size: 14px; background: #fff; color: #1c2b33; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .r-multiselectbtn.on { border-color: #296190; color: #296190; background: #eaf2fa; }
+  .r-multiselectcaret { margin-left: auto; font-size: 10px; color: #9aa4ab; }
+  .r-multiselectpanel { position: absolute; top: calc(100% + 4px); left: 0; z-index: 20; min-width: 260px; max-height: 300px; overflow-y: auto; background: #fff; border: 1px solid #d3dade; border-radius: 8px; box-shadow: 0 8px 24px rgba(20,40,60,.14); padding: 6px; display: flex; flex-direction: column; }
+  .r-multiselectopt { display: flex; align-items: center; gap: 8px; padding: 7px 8px; font-size: 13px; color: #1c2b33; cursor: pointer; border-radius: 5px; white-space: nowrap; }
+  .r-multiselectopt:hover { background: #f5f9fc; }
+  .r-multiselectopt input { cursor: pointer; }
+  .r-multiselectclear { align-self: flex-end; background: none; border: 0; color: #296190; font-family: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer; padding: 2px 6px; margin-bottom: 2px; }
+  .r-multiselectsearch { position: sticky; top: 0; z-index: 1; width: 100%; box-sizing: border-box; padding: 7px 8px; margin-bottom: 4px; border: 1px solid #d3dade; border-radius: 6px; font-family: inherit; font-size: 13px; background: #fff; }
+  .r-multiselectempty { padding: 8px; font-size: 12.5px; color: #9aa4ab; }
   .r-searchbtn { padding: 8px 18px; border: none; border-radius: 8px; background: #296190; color: #fff; font-size: 14px; cursor: pointer; }
   .r-searchbtn:disabled { opacity: .6; cursor: default; }
 

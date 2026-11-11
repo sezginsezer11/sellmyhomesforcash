@@ -186,6 +186,29 @@ export async function GET(request) {
     const url = new URL(request.url);
     const action = url.searchParams.get('action') || 'me';
 
+    // Every tag in use, with how many contacts carry it, so the filter can
+    // offer a real list instead of asking the user to type tag text exactly.
+    // Tags live in a jsonb array, which Postgres can't index for a cheap
+    // DISTINCT, so they're tallied here over the (small) contact set.
+    if (action === 'tags') {
+      const { data, error } = await fetchAllPaginated(() =>
+        supabaseAdmin.from('realscout_contacts').select('tags').order('id', { ascending: true }));
+      if (error) {
+        if (error.code === '42P01' || error.code === 'PGRST205') return NextResponse.json({ ok: false, error: 'table_missing' });
+        console.error(error);
+        return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 });
+      }
+      const counts = new Map();
+      for (const row of data || []) {
+        for (const t of row.tags || []) {
+          if (typeof t === 'string' && t.trim()) counts.set(t, (counts.get(t) || 0) + 1);
+        }
+      }
+      const tags = Array.from(counts, ([tag, count]) => ({ tag, count }))
+        .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+      return NextResponse.json({ ok: true, tags });
+    }
+
     if (action === 'me') {
       const r = await realscoutFetch('/me');
       if (!r.ok) return NextResponse.json({ ok: false, error: r.error, status: r.status });
@@ -201,6 +224,10 @@ export async function GET(request) {
       const contactType = (url.searchParams.get('contact_type') || '').trim();
       const minScore = url.searchParams.get('min_score');
       const sort = url.searchParams.get('sort') || 'last_active_at';
+      // Repeated ?tag= params rather than one comma-joined value: tag text is
+      // free-form and some of it contains commas.
+      const tags = url.searchParams.getAll('tag').filter(Boolean);
+      const tagMode = url.searchParams.get('tag_mode') === 'all' ? 'all' : 'any';
       const escLike = (s) => s.replace(/[,()]/g, '');
 
       const buildQuery = () => {
@@ -210,6 +237,12 @@ export async function GET(request) {
         if (zips.length) q = q.in('zipcode', zips);
         if (contactType) q = q.eq('contact_type', contactType);
         if (minScore) q = q.gte('scout_score', Number(minScore));
+        // "Has all of these" is a plain jsonb containment check. "Has any of
+        // these" would need an or= list, whose grammar breaks on the commas
+        // and parens that appear in tag text, so it's applied below instead.
+        // JSON.stringify, not the bare array: supabase-js renders an array
+        // argument as a Postgres array literal ({a,b}), which jsonb rejects.
+        if (tags.length && tagMode === 'all') q = q.contains('tags', JSON.stringify(tags));
         // id as a tiebreak keeps paging stable — without it rows with equal
         // sort values can repeat or vanish across page boundaries.
         return q.order(sort, { ascending: false, nullsFirst: false }).order('id', { ascending: true });
@@ -222,9 +255,15 @@ export async function GET(request) {
         return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 });
       }
 
+      let contacts = data || [];
+      if (tags.length && tagMode === 'any') {
+        const want = new Set(tags);
+        contacts = contacts.filter((c) => (c.tags || []).some((t) => want.has(t)));
+      }
+
       const { count } = await supabaseAdmin.from('realscout_contacts').select('*', { count: 'exact', head: true });
-      const newest = (data || []).reduce((acc, r) => (r.synced_at > acc ? r.synced_at : acc), '');
-      return NextResponse.json({ ok: true, contacts: data || [], total: count || 0, lastSyncedAt: newest || null });
+      const newest = contacts.reduce((acc, r) => (r.synced_at > acc ? r.synced_at : acc), '');
+      return NextResponse.json({ ok: true, contacts, total: count || 0, lastSyncedAt: newest || null });
     }
 
     return NextResponse.json({ ok: false, error: 'Unknown action.' }, { status: 400 });
