@@ -641,7 +641,7 @@ function SearchTab({ token }) {
   const [beds, setBeds] = useState('');
   const [subTypes, setSubTypes] = useState([]);
   const [listFilters, setListFilters] = useState([]);
-  const [tagFilter, setTagFilter] = useState('');
+  const [tagFilter, setTagFilter] = useState([]);
   const [rows, setRows] = useState([]);
   const [mode, setMode] = useState('prospects');
   const [loading, setLoading] = useState(false);
@@ -709,6 +709,18 @@ function SearchTab({ token }) {
       } catch {}
     })();
   }, []);
+
+  // Tags are typed in by hand on each listing, so the pick-list is rebuilt
+  // from what's actually in use — including right after a tag is edited.
+  const [tagOptions, setTagOptions] = useState([]);
+  const loadTagOptions = async () => {
+    try {
+      const res = await fetch('/api/market-data?tags=1', { headers: { Authorization: 'Bearer ' + token() } });
+      const j = await res.json();
+      if (j.ok) setTagOptions(j.tags || []);
+    } catch {}
+  };
+  useEffect(() => { loadTagOptions(); }, []);
 
   const [elementarySchools, setElementarySchools] = useState([]);
   const [middleSchools, setMiddleSchools] = useState([]);
@@ -832,10 +844,12 @@ function SearchTab({ token }) {
       prospects_only: prospectsOnly ? '1' : '0',
       status: statuses.join(','), community, address, zip, off_from: offFrom, off_to: offTo,
       price_min: priceMin, price_max: priceMax, sqft_min: sqftMin, sqft_max: sqftMax,
-      beds, sub_type: subTypes.join(','), filter_list_id: listFilters.join(','), tag: tagFilter,
+      beds, sub_type: subTypes.join(','), filter_list_id: listFilters.join(','),
       mapped_community: mappedCommunities.join(','),
       elementary_school: elementarySchools.join(','), middle_school: middleSchools.join(','), high_school: highSchools.join(','),
     });
+    // Repeated params, not comma-joined — a hand-typed tag may contain a comma.
+    for (const t of tagFilter) params.append('tag_in', t);
     try {
       const res = await fetch('/api/market-data?' + params.toString(), { headers: { Authorization: 'Bearer ' + token() } });
       const j = await res.json();
@@ -848,7 +862,7 @@ function SearchTab({ token }) {
     setCommunity(''); setAddress(''); setZip(''); setStatuses([]);
     setOffFrom(''); setOffTo(''); setPriceMin(''); setPriceMax('');
     setSqftMin(''); setSqftMax(''); setBeds(''); setSubTypes([]);
-    setListFilters([]); setTagFilter(''); setMappedCommunities([]);
+    setListFilters([]); setTagFilter([]); setMappedCommunities([]);
     setElementarySchools([]); setMiddleSchools([]); setHighSchools([]);
   };
 
@@ -972,7 +986,7 @@ function SearchTab({ token }) {
     fetch('/api/market-data', {
       method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token() },
       body: JSON.stringify({ mls_number: mlsNumber, tag }),
-    }).catch(() => {});
+    }).then(() => loadTagOptions()).catch(() => {});
   };
   const editTag = (r, tag) => {
     const mlsNumber = rowMlsNumber(r);
@@ -1127,7 +1141,12 @@ function SearchTab({ token }) {
           selected={listFilters}
           onChange={setListFilters}
         />
-        <input placeholder="Tag…" value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} />
+        <MultiSelect
+          placeholder="Any tag"
+          options={tagOptions.map((t) => ({ value: t.tag, label: `${t.tag} (${t.count})` }))}
+          selected={tagFilter}
+          onChange={setTagFilter}
+        />
         <button type="submit" className="m-searchbtn" disabled={loading}>{loading ? 'Searching…' : 'Search'}</button>
         <button type="button" className="m-resetbtn" onClick={() => { resetFilters(); setDrawnArea(null); }}>Reset</button>
         {searched && areaRows.length > 0 && <button type="button" className="m-exportbtn" onClick={exportCSV}>Export CSV</button>}

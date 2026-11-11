@@ -723,6 +723,22 @@ export async function GET(request) {
       return NextResponse.json({ ok: true, schools: { elementary: [...out.elementary].sort(), middle: [...out.middle].sort(), high: [...out.high].sort() } });
     }
 
+    // Distinct tags in use, with how many listings carry each. Tags are typed
+    // by hand per listing, so the only source of truth for "which tags exist"
+    // is the listings themselves.
+    if (url.searchParams.get('tags') === '1') {
+      const { data, error } = await fetchAllPaginated(() => supabaseAdmin.from('mls_listings').select('tag').not('tag', 'is', null).neq('tag', ''));
+      if (error) {
+        if (error.code === '42703') return NextResponse.json({ ok: true, tags: [] }); // not migrated yet
+        return NextResponse.json({ ok: false, error: 'Query failed.' }, { status: 500 });
+      }
+      const counts = new Map();
+      for (const r of data || []) { const v = (r.tag || '').trim(); if (v) counts.set(v, (counts.get(v) || 0) + 1); }
+      const tags = Array.from(counts, ([tag, count]) => ({ tag, count }))
+        .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+      return NextResponse.json({ ok: true, tags });
+    }
+
     // Upload history, most recent first — so the admin can see which name/client
     // a past CSV drop was for.
     if (url.searchParams.get('uploads') === '1') {
@@ -808,6 +824,10 @@ export async function GET(request) {
     const beds = url.searchParams.get('beds') || '';
     const subTypes = splitCsv(url.searchParams.get('sub_type'));
     const tagFilter = (url.searchParams.get('tag') || '').trim();
+    // Repeated ?tag_in= params rather than one comma-joined value: tags are
+    // typed by hand and some of them contain commas. A listing carries a
+    // single tag, so several selected tags can only ever mean "any of these".
+    const tagIn = url.searchParams.getAll('tag_in').filter(Boolean);
     const filterListIds = splitCsv(url.searchParams.get('filter_list_id'));
     // Strip characters that are special in PostgREST's .or() mini-syntax so a
     // comma/paren in a search box can't break or smuggle extra filter clauses.
@@ -847,6 +867,7 @@ export async function GET(request) {
         if (beds) q = q.gte('beds_total', Number(beds));
         if (subTypes.length) q = q.in('property_sub_type', subTypes);
         if (tagFilter) q = q.ilike('tag', `%${escLike(tagFilter)}%`);
+        if (tagIn.length) q = q.in('tag', tagIn);
         if (listGroupKeys) q = q.in('group_key', listGroupKeys);
         return q.order('last_off_market_date', { ascending: false });
       };
@@ -885,6 +906,7 @@ export async function GET(request) {
       if (beds) q = q.gte('beds_total', Number(beds));
       if (subTypes.length) q = q.in('property_sub_type', subTypes);
       if (tagFilter) q = q.ilike('tag', `%${escLike(tagFilter)}%`);
+      if (tagIn.length) q = q.in('tag', tagIn);
       if (listGroupKeys) q = q.in('group_key', listGroupKeys);
       return q.order('uploaded_at', { ascending: false });
     };
